@@ -51,6 +51,23 @@ func NewService(store *Store, engine Engine, timer Timer, retention ...func() in
 func (service *Service) Begin(ctx context.Context, id templatecatalog.ID, generation uint64) (Transaction, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
+	return service.beginLocked(ctx, id, generation, false)
+}
+
+// ApplyForce keeps validation, backups and durable recovery, but arms no timer
+// and confirms immediately after successful activation.
+func (service *Service) ApplyForce(ctx context.Context, id templatecatalog.ID, generation uint64) (Transaction, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	value, err := service.beginLocked(ctx, id, generation, true)
+	if err != nil {
+		return Transaction{}, err
+	}
+	resolved, _, err := service.confirmLocked(ctx, value.ID, false)
+	return resolved, err
+}
+
+func (service *Service) beginLocked(ctx context.Context, id templatecatalog.ID, generation uint64, force bool) (Transaction, error) {
 	if pending, err := service.store.Pending(ctx); err != nil {
 		return Transaction{}, err
 	} else if pending != nil {
@@ -88,19 +105,22 @@ func (service *Service) Begin(ctx context.Context, id templatecatalog.ID, genera
 			return Transaction{}, err
 		}
 	}
-	if err = service.timer.Arm(ctx); err != nil {
-		if baseline != nil {
-			// No activation has occurred; no file or live-state rollback is needed.
-			_, _, resolveErr := service.store.Resolve(context.WithoutCancel(ctx), transaction.ID, StateRolledBack)
-			if resolveErr != nil {
-				return Transaction{}, resolveErr
+	if !force {
+		if err = service.timer.Arm(ctx); err != nil {
+			if baseline != nil {
+				// No activation has occurred; no file or live-state rollback is needed.
+				_, _, resolveErr := service.store.Resolve(context.WithoutCancel(ctx), transaction.ID, StateRolledBack)
+				if resolveErr != nil {
+					return Transaction{}, resolveErr
+				}
+				return Transaction{}, err
 			}
+			_ = service.engine.RecoverConfirmed(context.WithoutCancel(ctx), descriptor)
+			_, _, _ = service.store.Resolve(context.WithoutCancel(ctx), transaction.ID, StateRolledBack)
 			return Transaction{}, err
 		}
-		_ = service.engine.RecoverConfirmed(context.WithoutCancel(ctx), descriptor)
-		_, _, _ = service.store.Resolve(context.WithoutCancel(ctx), transaction.ID, StateRolledBack)
-		return Transaction{}, err
 	}
+
 	if err = service.engine.ActivateConfirmed(ctx, descriptor); err != nil {
 		if service.manualReboot(id) {
 			// Activation can have succeeded before a later health check failed.
@@ -128,6 +148,9 @@ func (service *Service) Pending(ctx context.Context) (*Transaction, error) {
 func (service *Service) Confirm(ctx context.Context, id string) (Transaction, bool, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
+	return service.confirmLocked(ctx, id, true)
+}
+func (service *Service) confirmLocked(ctx context.Context, id string, cancelTimer bool) (Transaction, bool, error) {
 	pending, err := service.store.Pending(ctx)
 	if err != nil {
 		return Transaction{}, false, err
@@ -156,8 +179,10 @@ func (service *Service) Confirm(ctx context.Context, id string) (Transaction, bo
 	if pending.Phase != PhaseConfirming {
 		return Transaction{}, false, ErrPhase
 	}
-	if err = service.timer.Cancel(ctx); err != nil {
-		return Transaction{}, false, err
+	if cancelTimer {
+		if err = service.timer.Cancel(ctx); err != nil {
+			return Transaction{}, false, err
+		}
 	}
 	if err = service.engine.Confirm(ctx, descriptor(*pending)); err != nil {
 		return Transaction{}, false, err
@@ -308,4 +333,18 @@ func (service *Service) Recover(ctx context.Context) (*Transaction, error) {
 }
 func descriptor(transaction Transaction) templateapply.ConfirmedDescriptor {
 	return templateapply.ConfirmedDescriptor{TemplateID: transaction.TemplateID, BackupID: transaction.BackupID, CandidateHash: transaction.CandidateHash, Generation: transaction.Generation}
+}
+
+// CancelReboot records the operator's explicit decision to finish recovery
+// without reboot. It neither verifies nor changes files or live kernel state.
+func (service *Service) CancelReboot(ctx context.Context, id string) (Transaction, bool, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	var complete func(context.Context, templateapply.ConfirmedDescriptor) error
+	if engine, ok := service.engine.(interface {
+		CompleteRebootRollback(context.Context, templateapply.ConfirmedDescriptor) error
+	}); ok {
+		complete = engine.CompleteRebootRollback
+	}
+	return CancelRebootRecovery(ctx, service.store, service.timer, id, complete)
 }

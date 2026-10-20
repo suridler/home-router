@@ -30,3 +30,16 @@ func TestSafeApplyCLIStatusConfirmAndRollbackPending(t *testing.T) {
 		t.Fatalf("calls=%v", calls)
 	}
 }
+
+func TestCancelRebootCLI(t *testing.T) {
+	server := startUnixAPIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/safe-apply/recovery-id/cancel-reboot" {
+			t.Error(r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"transaction":{"transactionId":"recovery-id","state":"reboot_cancelled"},"changed":true}`)
+	}))
+	var out, stderr strings.Builder
+	if code := runSafeApply([]string{"safe-apply", "cancel-reboot", "recovery-id"}, writeCLIConfig(t, server.socket), &out, &stderr); code != 0 || !strings.Contains(out.String(), "reboot_cancelled") || strings.Contains(stderr.String(), "REBOOT REQUIRED") {
+		t.Fatal(code, out.String(), stderr.String())
+	}
+}

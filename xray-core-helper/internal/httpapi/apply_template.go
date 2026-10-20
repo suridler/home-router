@@ -12,6 +12,8 @@ import (
 )
 
 type ApplyTemplateService interface {
+	ApplyForce(context.Context, templatecatalog.ID, uint64) (safeapply.Transaction, error)
+	CancelReboot(context.Context, string) (safeapply.Transaction, bool, error)
 	Begin(context.Context, templatecatalog.ID, uint64) (safeapply.Transaction, error)
 	Pending(context.Context) (*safeapply.Transaction, error)
 	Confirm(context.Context, string) (safeapply.Transaction, bool, error)
@@ -42,7 +44,13 @@ func applyTemplate(w http.ResponseWriter, r *http.Request, service ApplyTemplate
 		writeAPIError(w, 400, "invalid_request", "unexpected revision without initialization")
 		return
 	}
-	transaction, err := service.Begin(ctx, id, *request.ExpectedGeneration)
+	var transaction safeapply.Transaction
+	var err error
+	if request.Force {
+		transaction, err = service.ApplyForce(ctx, id, *request.ExpectedGeneration)
+	} else {
+		transaction, err = service.Begin(ctx, id, *request.ExpectedGeneration)
+	}
 	if err != nil {
 		writeApplyTemplateError(w, err)
 		return
@@ -78,7 +86,9 @@ func resolveSafeApply(w http.ResponseWriter, r *http.Request, service ApplyTempl
 	var transaction safeapply.Transaction
 	var changed bool
 	var err error
-	if action == "confirm" {
+	if action == "cancel-reboot" {
+		transaction, changed, err = service.CancelReboot(r.Context(), id)
+	} else if action == "confirm" {
 		transaction, changed, err = service.Confirm(r.Context(), id)
 	} else {
 		transaction, changed, err = service.Rollback(r.Context(), id)
@@ -90,7 +100,7 @@ func resolveSafeApply(w http.ResponseWriter, r *http.Request, service ApplyTempl
 	writeJSON(w, 200, api.SafeApplyResolutionResponse{Transaction: safeTransaction(transaction), Changed: changed})
 }
 func safeTransaction(value safeapply.Transaction) api.SafeApplyTransaction {
-	return api.SafeApplyTransaction{TransactionID: value.ID, TemplateID: string(value.TemplateID), Deadline: value.Deadline, Phase: string(value.Phase), State: string(value.State), Generation: value.Generation, RebootRequired: value.Phase == safeapply.PhaseAwaitingReboot, RecoveryRequired: value.Phase == safeapply.PhaseRollingBack || value.Phase == safeapply.PhasePrepared || value.Phase == safeapply.PhaseConfirming}
+	return api.SafeApplyTransaction{TransactionID: value.ID, TemplateID: string(value.TemplateID), Deadline: value.Deadline, Phase: string(value.Phase), State: string(value.State), Generation: value.Generation, RebootRequired: value.State == safeapply.StatePending && value.Phase == safeapply.PhaseAwaitingReboot, RecoveryRequired: value.State == safeapply.StatePending && (value.Phase == safeapply.PhaseRollingBack || value.Phase == safeapply.PhasePrepared || value.Phase == safeapply.PhaseConfirming)}
 }
 func writeApplyTemplateError(w http.ResponseWriter, err error) {
 	if errors.Is(err, safeapply.ErrBaseline) {
@@ -99,6 +109,10 @@ func writeApplyTemplateError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, safeapply.ErrRebootRequired) {
 		writeAPIError(w, 409, "reboot_required", "system configuration files restored; runtime effects are not restored; manual reboot required")
+		return
+	}
+	if errors.Is(err, safeapply.ErrPhase) {
+		writeAPIError(w, 409, "safe_apply_phase_conflict", "operation is not allowed in this recovery phase")
 		return
 	}
 	if errors.Is(err, safeapply.ErrBusy) {

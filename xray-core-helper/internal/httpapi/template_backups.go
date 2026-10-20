@@ -27,7 +27,7 @@ func registerTemplateBackups(mux *http.ServeMux, backups TemplateBackupService, 
 	})
 	mux.HandleFunc("/v1/safe-apply/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/safe-apply/"), "/")
-		if len(parts) == 2 && r.Method == http.MethodPost && (parts[1] == "confirm" || parts[1] == "rollback") {
+		if len(parts) == 2 && r.Method == http.MethodPost && (parts[1] == "confirm" || parts[1] == "rollback" || parts[1] == "cancel-reboot") {
 			resolveSafeApply(w, r, apply, parts[0], parts[1])
 			return
 		}

@@ -14,13 +14,15 @@ import (
 )
 
 type applyTemplateFake struct {
-	called      bool
-	id          templatecatalog.ID
-	generation  uint64
-	err         error
-	transaction safeapply.Transaction
-	pendingErr  error
-	notPending  bool
+	called       bool
+	forceCalled  bool
+	cancelCalled bool
+	id           templatecatalog.ID
+	generation   uint64
+	err          error
+	transaction  safeapply.Transaction
+	pendingErr   error
+	notPending   bool
 }
 
 func (fake *applyTemplateFake) Begin(_ context.Context, id templatecatalog.ID, generation uint64) (safeapply.Transaction, error) {
@@ -28,6 +30,14 @@ func (fake *applyTemplateFake) Begin(_ context.Context, id templatecatalog.ID, g
 	fake.id = id
 	fake.generation = generation
 	return fake.transaction, fake.err
+}
+func (fake *applyTemplateFake) ApplyForce(ctx context.Context, id templatecatalog.ID, generation uint64) (safeapply.Transaction, error) {
+	fake.forceCalled = true
+	return fake.Begin(ctx, id, generation)
+}
+func (fake *applyTemplateFake) CancelReboot(context.Context, string) (safeapply.Transaction, bool, error) {
+	fake.cancelCalled = true
+	return fake.transaction, true, fake.err
 }
 func (fake *applyTemplateFake) Pending(context.Context) (*safeapply.Transaction, error) {
 	if fake.transaction.ID == "" || fake.notPending {
@@ -103,5 +113,34 @@ func TestApplyTemplateStrictRequestAndStableErrors(t *testing.T) {
 		if response.Code != test.status || !strings.Contains(response.Body.String(), test.code) {
 			t.Errorf("body=%s response=%d %s", test.body, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestForceTemplateAndCancelRebootAPI(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		fake := &applyTemplateFake{transaction: transactionFixture(), notPending: true}
+		fake.transaction.State = safeapply.StateConfirmed
+		handler := NewServer("test", xrayconfig.NewReader(xrayconfig.Settings{}), nil, nil, ServerServices{ApplyTemplate: fake}).Handler
+		response := httptest.NewRecorder()
+		body := `{"expectedGeneration":7}`
+		if force {
+			body = `{"expectedGeneration":7,"force":true}`
+		}
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/templates/nftables/apply", strings.NewReader(body)))
+		if response.Code != 200 || fake.forceCalled != force {
+			t.Fatal(response.Code, response.Body.String(), fake.forceCalled)
+		}
+	}
+	fake := &applyTemplateFake{transaction: transactionFixture()}
+	fake.transaction.Phase = safeapply.PhaseAwaitingReboot
+	handler := NewServer("test", xrayconfig.NewReader(xrayconfig.Settings{}), nil, nil, ServerServices{ApplyTemplate: fake}).Handler
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/safe-apply/tx-1/cancel-reboot", strings.NewReader(`{}`)))
+	if response.Code != 200 || !fake.cancelCalled {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	fake.transaction.State = safeapply.StateRebootCancelled
+	if value := safeTransaction(fake.transaction); value.RebootRequired || value.RecoveryRequired {
+		t.Fatal("resolved history reported as pending", value)
 	}
 }

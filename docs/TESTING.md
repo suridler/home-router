@@ -252,3 +252,23 @@ U6.12 выполняется на отдельном восстановимом 
 сохранение настроек/БД/рабочих шаблонов, upgrade, разрешённый downgrade и запрет
 ниже minimum_installable_version, явные retry/rollback после отказа и прерывания.
 Fault injection и подмена manifest на работающем сервере не входят в обычный T8.
+
+### CLI safe-apply и отмена reboot, 20.10.2026
+
+Локально пройдены `gofmt -d ./cmd ./internal` (без вывода), `go test ./...`,
+`go test -race ./...`, `go build ./cmd/...`, `go vet ./...` и `git diff --check`.
+Проверены подтверждение/откат в одной команде, обратный отсчёт, потеря связи,
+истечение deadline без ввода, EOF, повтор probe без повторного apply,
+подтверждение при неуспехе probe; force без timer и с сохранением recovery при
+ошибке; отмена reboot, неверная фаза/ID, повтор, ошибка metadata и сохранение истории.
+Offline-команда использует тот же проверенный recovery-код с общим runtime lock;
+её запуск через systemd на сервере ещё не проверен. Production-службы и маршруты
+при этих локальных проверках не менялись.
+
+Дополнительно после исправления cursor redraw повторно пройдены Go test/race/
+build/vet, gofmt и diff check. Собранный CLI проверен через Linux PTY и fake
+Unix API: набор ответа во время countdown, исправление Backspace, пункт `3`,
+повтор probe, подтверждение — PASS; один apply, два probe, один confirm.
+Скрипт проверки находится рядом с локальным CLI в
+`/home/suridler/builds/helper-safeapply-cursor-fix-orvdh6km/verify-pty.py`.
+Нужна визуальная проверка в операторском терминале; службы сервера не менялись.

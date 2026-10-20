@@ -4,6 +4,7 @@ import "time"
 
 type ApplyTemplateRequest struct {
 	ExpectedGeneration *uint64 `json:"expectedGeneration"`
+	Force              bool    `json:"force,omitempty"`
 	InitializeBlock    bool    `json:"initializeBlock,omitempty"`
 	ExpectedRevision   string  `json:"expectedRevision,omitempty"`
 }

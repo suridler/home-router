@@ -156,7 +156,9 @@ removed semantic checks with arbitrary shell execution. Profile-specific traffic
 tests may know a shipped template's behavior; the generic engine must not impose
 it on other valid templates. Structural policy parsers and a Go-generated nft batch
 wrapper are outside the native contract. System rollback restores one durable nft/sysctl/unit file
-group and waits for manual reboot; do not add component live rollback. Preserve
+group and waits for manual reboot; do not add component live rollback. Explicit
+operator `cancel-reboot` may resolve only `awaiting_reboot`, retaining history as
+`reboot_cancelled` without changing files or runtime. Preserve
 read/status access and the mutation gate when recovery evidence is incomplete.
 
 ## Handoff format

@@ -31,9 +31,10 @@ const (
 type State string
 
 const (
-	StatePending    State = "pending"
-	StateConfirmed  State = "confirmed"
-	StateRolledBack State = "rolled_back"
+	StatePending         State = "pending"
+	StateConfirmed       State = "confirmed"
+	StateRolledBack      State = "rolled_back"
+	StateRebootCancelled State = "reboot_cancelled"
 )
 
 var (
@@ -161,7 +162,7 @@ func (store *Store) Advance(ctx context.Context, id string, from, to Phase) (Tra
 }
 
 func (store *Store) Resolve(ctx context.Context, id string, state State) (Transaction, bool, error) {
-	if state != StateConfirmed && state != StateRolledBack {
+	if state != StateConfirmed && state != StateRolledBack && state != StateRebootCancelled {
 		return Transaction{}, false, ErrPhase
 	}
 	pending, err := store.Pending(ctx)

@@ -225,44 +225,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if arguments[0] == "templates" && len(arguments) >= 2 && arguments[1] == "apply" {
-		if (len(arguments) != 5 && len(arguments) != 8) || arguments[3] != "--expected-generation" {
-			writeUsage(stderr)
-			return 2
-		}
-		generation, err := strconv.ParseUint(arguments[4], 10, 64)
-		if err != nil {
-			writeUsage(stderr)
-			return 2
-		}
-		config, err := bootstrap.Load(*configPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		client := unixhttp.NewClient(config.Server.Socket, 30*time.Second)
-		path := "/v1/templates/" + url.PathEscape(arguments[2]) + "/apply"
-		request := api.ApplyTemplateRequest{ExpectedGeneration: &generation}
-		if len(arguments) == 8 {
-			if arguments[2] != "nftables" || arguments[5] != "--initialize-block" || arguments[6] != "--expected-revision" || len(arguments[7]) != 64 {
-				writeUsage(stderr)
-				return 2
-			}
-			request.InitializeBlock, request.ExpectedRevision = true, arguments[7]
-			fmt.Fprintln(stderr, "INITIALIZE: operator review of existing content/diff is required; append only, semantic rule compatibility is unchecked.")
-		}
-		if arguments[2] == "nftables" || arguments[2] == "sysctl" || arguments[2] == "tproxy-unit" {
-			fmt.Fprintln(stderr, "WARNING: rollback restores nftables, sysctl and systemd files from one baseline; runtime effects require a MANUAL SERVER REBOOT. No automatic reboot will occur. Keep console access available.")
-		}
-		var response api.ApplyTemplateResponse
-		if err := requestJSON(client, http.MethodPost, path, request, &response); err != nil {
-			writeRequestError(stderr, "templates", err)
-			return 1
-		}
-		if err := writeJSON(stdout, response); err != nil {
-			fmt.Fprintln(stderr, "could not write command output")
-			return 1
-		}
-		return 0
+		return runApplyTemplate(arguments, *configPath, os.Stdin, stdout, stderr)
 	}
 
 	if arguments[0] == "templates" && len(arguments) >= 2 && (arguments[1] == "backups" || arguments[1] == "restore") {
@@ -732,10 +695,11 @@ func writeUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] templates backups TEMPLATE_ID")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] templates restore TEMPLATE_ID BACKUP_ID --expected-generation N")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] templates accept-system TEMPLATE_ID --expected-generation N --expected-revision REVISION")
-	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] templates apply TEMPLATE_ID --expected-generation N")
+	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] templates apply TEMPLATE_ID --expected-generation N [-force]")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] safe-apply {status|rollback-pending}")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] network-probe [status]")
-	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] safe-apply {confirm|rollback} TRANSACTION_ID")
+	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] safe-apply {confirm|rollback|cancel-reboot} TRANSACTION_ID")
+	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] safe-apply cancel-reboot TRANSACTION_ID --offline")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] service {xray|tproxy} {start|stop|restart}")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] errors [collect]")
 	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] logs {access|error} [--limit N]")

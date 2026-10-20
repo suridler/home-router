@@ -123,7 +123,28 @@ Refresh не принимает differences и не применяет файл�
 ## Safe apply и восстановление
 
 Держите независимую консоль до потенциально разрывающего сеть apply.
-Подтвердите или откатите конкретную pending-операцию до deadline:
+CLI `templates apply` запрашивает подтверждение в той же команде: показывает
+обратный отсчёт и время последнего ответа helper (запрос каждые 5 секунд).
+В терминале счётчик занимает отдельную строку над вводом; обновления сохраняют
+позицию курсора и набранный ответ. При перенаправлении вывода перерисовки нет.
+Это проверяет связь CLI с helper, но не прохождение LAN-трафика. Проверка сети
+информационная: оператор может подтвердить и при её неуспехе. Таймер не продлевается.
+Enter, EOF или завершение CLI оставляют независимый таймер отката активным;
+команда без подтверждения возвращает ненулевой код.
+
+```bash
+sudo xray-core-helper templates backups tproxy-unit
+# N — completedGeneration из истории:
+sudo xray-core-helper templates apply tproxy-unit --expected-generation N
+# Без таймера и без вопроса о подтверждении:
+sudo xray-core-helper templates apply tproxy-unit --expected-generation N -force
+```
+
+`-force` (также `--force`) сохраняет проверки, backup и журнал операции.
+Он не отменяет другую pending-транзакцию. При ошибке применения изучите статус:
+незавершённое восстановление может требовать отдельного решения.
+Для web/API остаются отдельные apply и confirm. При необходимости CLI также
+позволяет подтвердить или откатить конкретную pending-операцию до deadline:
 
 ```bash
 sudo /usr/local/bin/xray-core-helper safe-apply status
@@ -141,6 +162,21 @@ baseline всей native-группы: nft/sysctl/routing unit и Xray drop-in. 
   восстановление; reboot не заменяет отсутствующие файлы.
 - Awaiting reboot: файлы восстановлены, оператор вручную выполняет sudo reboot.
 - Новый kernel boot ID и совпадение baseline завершают recovery.
+
+Если оператор решил продолжить без перезагрузки, требование можно явно отменить:
+
+```bash
+sudo xray-core-helper safe-apply cancel-reboot TRANSACTION_ID
+# При остановленном daemon — самостоятельная команда от root:
+sudo /path/to/new/xray-core-helper safe-apply cancel-reboot TRANSACTION_ID --offline
+```
+
+Команда допустима только в `awaiting_reboot`, после завершённого восстановления
+файлов. Она записывает результат `reboot_cancelled` и снимает блокировку изменений,
+сохраняя историю и baseline. Файлы, работающая сеть и службы Xray не меняются;
+соответствие runtime загрузочным файлам оператор проверяет самостоятельно.
+`--offline` требует свободного общего runtime lock, не запускает helper и позволяет
+выполнить восстановление новым CLI до обновления установленного комплекта.
 
 Не удаляйте pending, SQLite, backups, audit и не правьте fingerprints ради PASS.
 `setup` — самостоятельный режим CLI: он останавливает helper/web, берёт runtime

@@ -55,7 +55,9 @@
   may set required ownership and permissions for helper's own installed files.
 - System rollback restores the durable nft/sysctl/unit file group and waits
   for manual reboot. Helper restart is not reboot; verify a new boot ID and
-  matching baseline files. Never clear pending evidence to make a test pass.
+  matching baseline files. Explicit operator `safe-apply cancel-reboot` may finish
+  `awaiting_reboot` without reboot, preserving evidence as `reboot_cancelled`;
+  it must not change files or runtime. Never erase pending evidence to make a test pass.
 - Keep Xray restart explicit. Installing/upgrading services, applying templates,
   changing live routing, geodata updates and failure injection need task scope
   that authorizes those host actions. Host access alone is not authorization.
