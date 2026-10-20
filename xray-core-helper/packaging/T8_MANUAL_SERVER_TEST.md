@@ -43,7 +43,7 @@ templates, confinement, sysctl dry-run и web HTTP. Проверки истор�
 sudo python3 packaging/t8-server-test.py smoke --reviewed-sysctl
 ```
 
-Runner выполняет sysctl apply/confirm и apply/rollback, сохраняет baseline всей группы nftables/sysctl/unit и метаданные файлов, проверяет сохранность recovery после перезапуска helper. Откат system-файлов требует последующей ручной перезагрузки. PASS на этом этапе означает готовность продолжить процедуру.
+Runner выполняет sysctl apply/confirm и apply/rollback, сохраняет baseline всей группы nftables/sysctl/routing unit и трёх lifecycle assets (script, Xray drop-in, независимая sysctl unit) и метаданные файлов, проверяет сохранность recovery после перезапуска helper. Откат system-файлов требует последующей ручной перезагрузки. PASS на этом этапе означает готовность продолжить процедуру.
 
 Сохраните напечатанный audit path; для post-reboot нужен именно audit успешного smoke. Не используйте каталог неуспешного preflight.
 
@@ -102,11 +102,17 @@ sudo jq '{templates: [.body.templates[]? | {templateId, state, summary}]}' \
 2. Preview, confirm и timeout для nftables и unit на disposable host.
 3. Crash helper, повторное восстановление, частичный отказ записи и сохранность baseline.
 4. CLI и browser setup, прямой и настроенный proxy outbound.
-5. Работа data plane при остановленных helper/web.
-6. Открытие всех разделов панели, stale/conflict/error состояния и отображение recovery.
-7. Внутренний планировщик сбора ошибок и сохранение последних 100 записей после перезапуска/reboot:
+5. Работа data plane при остановленных helper/web, включая холодный boot без
+   helper; не путать успех прежнего bundle с приёмкой N9.
+6. Stop/start/restart и crash Xray на disposable host: оба nft jump отключаются
+   до штатной остановки/после сбоя; start возвращает их после policy route/rule.
+   Отказ активации делает Xray failed и очищает частично установленный перехват.
+   Ручной nft reload оставляет перехват выключенным до явного restart routing.
+   Проверить сохранность чужих nft-объектов/маршрутов и повторный off.
+7. Открытие всех разделов панели, stale/conflict/error состояния и отображение recovery.
+8. Внутренний планировщик сбора ошибок и сохранение последних 100 записей после перезапуска/reboot:
    одинаковые сообщения остаются отдельными записями с собственным временем.
-8. Обновление геобаз с установленным сборщиком, пустым и непустым динамическим
+9. Обновление геобаз с установленным сборщиком, пустым и непустым динамическим
    списком; завершённая консолидация и работоспособность Xray после обновления.
 
 В CLI и web setup проверить пробы шлюза/HTTPS до и после включения TProxy,

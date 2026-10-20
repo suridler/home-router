@@ -26,6 +26,9 @@ func systemMember(id templatecatalog.ID) bool {
 }
 
 func (engine *Engine) groupPath(id templatecatalog.ID) (string, error) {
+	if LifecycleMember(id) {
+		return engine.lifecyclePath(id)
+	}
 	if !systemMember(id) {
 		return "", &Error{Code: CodeUnknownTemplate}
 	}
@@ -64,7 +67,11 @@ func (engine *Engine) CaptureSystemBaseline(ctx context.Context) ([]BaselineFile
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	var files []BaselineFile
-	for _, id := range []templatecatalog.ID{templatecatalog.Nftables, templatecatalog.Sysctl, templatecatalog.TProxyUnit} {
+	ids := []templatecatalog.ID{templatecatalog.Nftables, templatecatalog.Sysctl, templatecatalog.TProxyUnit}
+	for _, asset := range engine.lifecycleInventory() {
+		ids = append(ids, asset.ID)
+	}
+	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -77,6 +84,12 @@ func (engine *Engine) CaptureSystemBaseline(ctx context.Context) ([]BaselineFile
 			return nil, err
 		}
 		files = append(files, file)
+	}
+	engine.lifecycleBaseline = nil
+	for _, file := range files {
+		if LifecycleMember(file.TemplateID) {
+			engine.lifecycleBaseline = append(engine.lifecycleBaseline, file)
+		}
 	}
 	return files, nil
 }
@@ -118,6 +131,9 @@ func (engine *Engine) RestoreSystemFile(ctx context.Context, file BaselineFile) 
 		}
 		return syncDirectory(filepath.Dir(path))
 	}
+	if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return &Error{Code: CodeRollback}
+	}
 	if err = atomicReplace(path, file.Content, os.FileMode(file.Mode), int(file.UID), int(file.GID)); err != nil {
 		return &Error{Code: CodeRollback}
 	}
@@ -127,7 +143,7 @@ func (engine *Engine) RestoreSystemFile(ctx context.Context, file BaselineFile) 
 func (engine *Engine) VerifySystemBaseline(ctx context.Context, files []BaselineFile) error {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	if len(files) != 3 {
+	if len(files) != 3 && len(files) != 6 {
 		return &Error{Code: CodeRollback}
 	}
 	seen := map[templatecatalog.ID]bool{}
@@ -135,7 +151,7 @@ func (engine *Engine) VerifySystemBaseline(ctx context.Context, files []Baseline
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if seen[expected.TemplateID] {
+		if seen[expected.TemplateID] || (!systemMember(expected.TemplateID) && (len(files) != 6 || !LifecycleMember(expected.TemplateID))) {
 			return &Error{Code: CodeRollback}
 		}
 		seen[expected.TemplateID] = true

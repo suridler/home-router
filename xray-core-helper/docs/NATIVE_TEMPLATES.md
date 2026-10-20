@@ -266,8 +266,8 @@ Successful value comparison does not prove the command ran or forwarding works.
 ## 4. Trusted apply/rollback adapters
 
 Every adapter prepares durable evidence before file replacement or runtime
-mutation: template revision, original file bytes/metadata or absence, bounded
-runtime snapshot, ownership descriptor and prior service state. Capture failure
+mutation: template revision, original file bytes/metadata or absence,
+owned resource descriptors and prior service state. Capture failure
 blocks apply. Evidence is private and uses the existing safe-apply journal,
 confirmation timer and boot-recovery mechanism, not a second transaction engine.
 The approved system recovery contract uses file evidence and manual reboot,
@@ -297,12 +297,23 @@ finish bookkeeping; boot-ID change is not itself proof of healthy forwarding.
 If a crash interrupts file restoration, restore it first and conservatively
 require a subsequent reboot rather than assume this boot loaded the old file.
 
-Approved recovery group: nftables, sysctl and the managed systemd unit belong
-to ONE system recovery operation. Capture all member files (including original
-absence and metadata) before the first mutation, even when applying one selected
-template. Keep per-template apply/confirmation choices, but never create three
-independent rollback/reboot cycles or combine backups from different operations.
-Xray structured configuration is outside this recovery group.
+The system recovery group has six durable members: nftables, sysctl, the
+routing unit, `/usr/local/libexec/xray-tproxy/network`,
+`/etc/systemd/system/xray.service.d/50-tproxy.conf`, and
+`/etc/systemd/system/xray-tproxy-sysctl.service`. Capture every member (including
+original absence and metadata) before the first mutation, even when applying
+one selected template. Keep per-template apply/confirmation choices but one
+recovery operation; never combine baselines from different operations. Historical
+three-member evidence remains recoverable in its original scope; new captures
+include all six. Xray structured configuration is outside this recovery group.
+
+Explicit TProxy-unit apply prepares the three auxiliary files from fixed
+`/usr/share/xray-core-helper/native` sources. Source bytes participate in the
+candidate revision, and existing destinations are checked for drift before
+replacement. Setup network preparation uses the same fixed inventory. These
+assets are not new public template IDs, and their paths are never request inputs.
+Bundle install/update refreshes factory sources without replacing the active
+native lifecycle. Helper uninstall preserves the installed native files.
 
 On timeout, explicit rollback or interrupted unconfirmed apply, restore every
 group member to that operation's baseline, then enter one awaiting_reboot state.
@@ -335,7 +346,41 @@ the guarantee. Runtime effects can remain changed until the manual reboot.
 Failed rollback retains artifacts and blocks conflicting writes; syntax success
 or a returned HTTP response cannot mark incomplete recovery as confirmed.
 
-## 5. Status and implementation gates
+## 5. Independent shipped-profile lifecycle
+
+The shipped nft profile persists empty hooked `prerouting`/`output` chains;
+processing lives in `prerouting_proxy`/`output_proxy`. The standalone fixed-purpose
+Python adapter `/usr/local/libexec/xray-tproxy/network` reads the numeric
+`TPROXY_MARK`/`TPROXY_TABLE` Environment of the effective routing unit. It does not
+read helper settings, SQLite, working templates or sockets and does not call
+helper/API. This adapter supports this specific profile; the generic template
+engine does not infer these chains from arbitrary native configurations.
+
+`50-tproxy.conf` calls `xray-stop` before Xray start, during stop and after exit,
+and `xray-start` in post-start. Post-start creates `/run/xray-tproxy.started`, then
+restarts the routing unit only when enabled. Failure propagates to Xray start.
+The routing unit has `ConditionPathExists` on that marker and no reciprocal
+Xray ordering. An early multi-user.target job cannot enable interception.
+
+On activation, the adapter validates the marked native block, applies sysctl
+through independent `xray-tproxy-sysctl.service`, loads the disabled profile,
+adds the exact local route and fwmark rule, then enables both jumps in one nft
+transaction. On disable it flushes only the two owned entry chains together,
+then removes matching policy rules and the matching local route. Other nft
+objects, forwarding and sysctl remain in place; repeated disable is supported.
+Failure after partial activation attempts the same cleanup and reports command
+step failures without copying secret-bearing native output. No transaction spans
+nftables and routing, and existing proxied connections cannot survive Xray exit.
+
+Loading the persistent nft file manually deliberately leaves interception off;
+explicit routing-unit restart is needed with Xray running. No automatic healer
+is installed. `enable` changes boot enablement only. CLI `network-check` is a
+single explicit diagnostic, not a boot/action gate; API/socket checks belong
+there, and config mtime is not used as proof of loaded config. Existing external
+owner/group/mode never determine readiness or trigger permission repairs; actual
+access errors and native syntax/declared binding validation remain meaningful.
+
+## 6. Status and implementation gates
 
 Distinguish byte drift, declared-value mismatch, invalid declaration, unresolved
 provider, unsupported adapter scope, unchecked runtime effect and failed actual

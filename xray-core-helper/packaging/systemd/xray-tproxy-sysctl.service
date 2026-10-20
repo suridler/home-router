@@ -1,0 +1,19 @@
+[Unit]
+Description=Apply the installed native Xray sysctl configuration
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/sbin/sysctl -p /etc/sysctl.d/99-xray.conf
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+# Approved boundary: only this fixed-purpose oneshot can write native sysctl
+# keys (including non-network keys). The daemon retains ProtectKernelTunables.
+# Neither executable nor input path is supplied by a template or API request.
+ReadWritePaths=/proc/sys

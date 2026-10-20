@@ -143,7 +143,7 @@ The repository tree is package input only. Installation copies missing files
 to the private working tree `/etc/xray-core-helper/templConf` and never edits
 this checkout at runtime.
 
-| Template ID | Repository file | Installed working file | System file | Owner after install |
+| Template ID | Repository file | Installed working file | System file | Working-template owner/mode |
 | --- | --- | --- | --- | --- |
 | `xray-config` | `xray/config.json` | `xray/config.json` | Effective `xray.service` config path (normally `/usr/local/etc/xray/config.json`) | `root:root`, `0600` |
 | `nftables` | `nftables/nftables.conf` | `nftables/nftables.conf` | `/etc/nftables.conf` | `root:root`, `0600` |
@@ -158,6 +158,9 @@ The Xray destination uses root ownership and the discovered service group with
 mode `0640`; the other system destinations use
 `root:root 0644` (nft/sysctl/unit).
 Rollback restores the original mode and UID/GID, not the installation defaults.
+These defaults are not security-scanner criteria: accessible existing system
+files are not rejected because of administrator-selected owner/group/mode, and
+helper does not automatically repair them.
 
 The nft template uses standalone `# helper:v1 bind` comments before native
 scalar definitions. Their local IDs and native variable names are not engine
@@ -207,12 +210,26 @@ remain direct; the transparent ingress default selects proxy. Changing proxy to
 an actual remote outbound retains routing tags and must retain its bypass mark.
 A tag called proxy is not proof of a configured or reachable proxy server.
 
-The shipped routing unit gates activation with the read-only `network-check`
-CLI, applies sysctl through the dedicated confined oneshot, and loads only the
-managed nft block through a fixed-purpose boot adapter. Policy routing is last.
-After/BindsTo/PartOf tie the routing lifecycle to Xray without reciprocal hooks.
-Kernel effects and LAN connectivity still require operator acceptance. These
-commands are native profile content, not a Go-generated rule policy.
+The persistent nft file has empty hooked `prerouting`/`output` chains and
+separate `prerouting_proxy`/`output_proxy` processing chains. Loading it alone
+leaves interception off. The standalone `/usr/local/libexec/xray-tproxy/network`
+loads the marked native block and sysctl, installs the exact policy route/rule,
+and activates both jumps atomically as its last step. Disable flushes both entry
+chains first, then removes the matching rule/route without flushing other routes.
+
+Xray's separate `50-tproxy.conf` invokes repeatable cleanup before start, during
+stop and after exit. Post-start creates `/run/xray-tproxy/started` and restarts
+the routing unit only if enabled; failure makes Xray start fail. The routing
+unit requires the marker and has no After/BindsTo/PartOf edge to Xray. No helper
+CLI/config/DB/API/socket participates; `network-check` is explicit diagnostics.
+Manual nft reload requires explicit routing-unit restart to restore interception.
+
+Preparation or TProxy-unit apply installs script/drop-in/independent sysctl unit
+from fixed factory assets. Bundle updates refresh only factory sources, not
+active lifecycle files; helper uninstall preserves the native installation.
+All six native files share recovery evidence; working templates remain unchanged
+until explicit operator action. Actual boot/crash/LAN behavior requires operator
+acceptance. See [native lifecycle/recovery](../docs/NATIVE_TEMPLATES.md).
 
 ### USERLIST asset preparation
 

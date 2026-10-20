@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"home-router/xray-core-helper/internal/bootstrap"
+	"home-router/xray-core-helper/internal/commandrunner"
 	"home-router/xray-core-helper/internal/filemetadata"
 	"home-router/xray-core-helper/internal/nativebinding"
 	"home-router/xray-core-helper/internal/nativeblock"
 	"home-router/xray-core-helper/internal/nativewrite"
+	"home-router/xray-core-helper/internal/templateapply"
 	"home-router/xray-core-helper/internal/templatecatalog"
 	"home-router/xray-core-helper/internal/templatevalidation"
 	"home-router/xray-core-helper/internal/xrayconfig"
@@ -33,6 +35,8 @@ type validateFunc func(context.Context, templatecatalog.ID, string) error
 const StateRoot = "/var/lib/xray-core-helper/setup"
 
 type fileStore struct {
+	lifecycleAssets []templateapply.LifecycleAsset
+	reloadNative    func(context.Context) error
 	maxAssetSize    int
 	mu              sync.Mutex
 	root            string
@@ -54,12 +58,14 @@ type fileStore struct {
 	validateAssets  func(context.Context, string, string) error
 }
 type setupManifest struct {
-	Network     *setupFile  `json:"network,omitempty"`
-	UserGeosite *setupAsset `json:"userGeosite,omitempty"`
-	UserGeoip   *setupAsset `json:"userGeoip,omitempty"`
-	Version     int         `json:"version"`
-	ID          string      `json:"id"`
-	Items       []setupFile `json:"items"`
+	LifecycleVersion int         `json:"lifecycleVersion,omitempty"`
+	Lifecycle        []setupFile `json:"lifecycle,omitempty"`
+	Network          *setupFile  `json:"network,omitempty"`
+	UserGeosite      *setupAsset `json:"userGeosite,omitempty"`
+	UserGeoip        *setupAsset `json:"userGeoip,omitempty"`
+	Version          int         `json:"version"`
+	ID               string      `json:"id"`
+	Items            []setupFile `json:"items"`
 }
 type setupFile struct {
 	Preserve      bool               `json:"preserve,omitempty"`
@@ -110,6 +116,15 @@ func NewFileStoreWithCatalog(root string, validator interface {
 		return nil, errors.New("invalid geodata size limit")
 	}
 	store.maxAssetSize = geodatalimits.Bytes(maxAssetSizeMB)
+	store.lifecycleAssets = templateapply.DefaultLifecycleAssets()
+	store.reloadNative = func(ctx context.Context) error {
+		runner, err := commandrunner.New("/usr/bin/systemctl", 30*time.Second)
+		if err != nil {
+			return err
+		}
+		_, err = runner.Run(ctx, []string{"daemon-reload"})
+		return err
+	}
 	store.metadata = filemetadata.Destination
 	store.identity = xrayidentity.New().GID
 	store.checkRelations = true
@@ -331,6 +346,9 @@ func (s *fileStore) Prepare(ctx context.Context, plan Plan) (SetupTransaction, e
 			return nil, err
 		}
 	}
+	if err := s.prepareLifecycle(&m); err != nil {
+		return nil, err
+	}
 	if err := s.prepareNetwork(&m, plan); err != nil {
 		return nil, err
 	}
@@ -350,6 +368,9 @@ func (t *fileTransaction) Validate(ctx context.Context) error {
 		}
 		if item.Preserve && (item.ID != templatecatalog.XrayConfig || index >= len(t.store.entries)) {
 			continue
+		}
+		if templateapply.LifecycleMember(item.ID) {
+			continue // Fixed bundle assets, digest checked above; not user templates.
 		}
 		if item.ID == networkID {
 			if _, err := bootstrap.Load(item.Candidate); err != nil {
@@ -374,7 +395,7 @@ func (t *fileTransaction) Validate(ctx context.Context) error {
 			if err != nil || contentHash(raw) != item.CandidateHash {
 				return errors.New("setup candidate changed")
 			}
-			if item.ID != networkID {
+			if item.ID != networkID && !templateapply.LifecycleMember(item.ID) {
 				if _, exists := values[item.ID]; !exists {
 					values[item.ID] = raw
 				}
@@ -482,6 +503,9 @@ func (t *fileTransaction) Commit(ctx context.Context) error {
 			return err
 		}
 	}
+	if t.store.reloadNative != nil {
+		return t.store.reloadNative(ctx)
+	}
 	return nil
 }
 func (t *fileTransaction) Rollback(context.Context) error {
@@ -575,6 +599,9 @@ func (s *fileStore) restore(m setupManifest) error {
 			s.network = c.Network
 		}
 	}
+	if result == nil && s.reloadNative != nil {
+		result = s.reloadNative(context.Background())
+	}
 	if result == nil {
 		result = s.clearPending()
 	}
@@ -596,6 +623,9 @@ func (s *fileStore) writeManifest(m setupManifest) error {
 }
 
 func (s *fileStore) validateManifest(m setupManifest) error {
+	if err := s.validateLifecycleManifest(m); err != nil {
+		return err
+	}
 	if err := s.validateNetworkManifest(m); err != nil {
 		return err
 	}

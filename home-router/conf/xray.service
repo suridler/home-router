@@ -13,8 +13,8 @@ NoNewPrivileges=true
 
 ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
 
-# Routing lifecycle belongs to xray-tproxy-routing.service via
-# After/BindsTo/PartOf. Synchronous reciprocal hooks create a dependency cycle.
+# Native routing hooks are installed separately in xray.service.d/50-tproxy.conf.
+# Keep this vendor unit independent of helper and reciprocal routing ordering.
 
 Restart=on-failure
 RestartPreventExitStatus=23

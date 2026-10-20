@@ -1,9 +1,9 @@
 package templateapply
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"home-router/xray-core-helper/internal/gatewaycheck"
 	"os"
 	"time"
 
@@ -17,6 +17,7 @@ import (
 const (
 	systemctlBinary = "/usr/bin/systemctl"
 	nftBinary       = "/usr/sbin/nft"
+	networkBinary   = "/usr/local/libexec/xray-tproxy/network"
 	runtimeTimeout  = 2 * time.Minute
 )
 
@@ -30,7 +31,7 @@ type boundedRuntimeRunner struct {
 
 func newBoundedRuntimeRunner() (*boundedRuntimeRunner, error) {
 	result := &boundedRuntimeRunner{runners: make(map[string]*commandrunner.Runner, 3)}
-	for _, executable := range []string{systemctlBinary, nftBinary} {
+	for _, executable := range []string{systemctlBinary, nftBinary, networkBinary} {
 		runner, err := commandrunner.New(executable, runtimeTimeout)
 		if err != nil {
 			return nil, err
@@ -57,9 +58,9 @@ func (runner *boundedRuntimeRunner) Run(ctx context.Context, executable string, 
 }
 
 type CommandRuntime struct {
-	gate      func(context.Context) error
-	runner    Runner
-	verifyAPI func(context.Context, string) error
+	runner           Runner
+	verifyAPI        func(context.Context, string) error
+	networkInstalled func() (bool, error) // hermetic filesystem substitution
 }
 
 func NewCommandRuntime() (*CommandRuntime, error) {
@@ -70,7 +71,7 @@ func NewCommandRuntimeWithXray(binary string, configPaths ...string) (*CommandRu
 	if err != nil {
 		return nil, err
 	}
-	return &CommandRuntime{runner: runner, gate: func(ctx context.Context) error { return gatewaycheck.Wait(ctx, configPaths...) }, verifyAPI: func(ctx context.Context, endpoint string) error { return verifyAPIWithBinary(ctx, binary, endpoint) }}, nil
+	return &CommandRuntime{runner: runner, verifyAPI: func(ctx context.Context, endpoint string) error { return verifyAPIWithBinary(ctx, binary, endpoint) }}, nil
 }
 
 func newCommandRuntime(runner Runner) (*CommandRuntime, error) {
@@ -84,7 +85,7 @@ func (runtime *CommandRuntime) Prepare(ctx context.Context, id templatecatalog.I
 	if runtime == nil || runtime.runner == nil {
 		return nil, &Error{Code: CodeRuntime}
 	}
-	transaction := &commandRuntimeTransaction{id: id, runner: runtime.runner, verifyAPI: runtime.verifyAPI, gate: runtime.gate}
+	transaction := &commandRuntimeTransaction{id: id, runner: runtime.runner, verifyAPI: runtime.verifyAPI, networkInstalled: runtime.networkInstalled}
 	switch id {
 	case templatecatalog.XrayConfig, templatecatalog.TProxyUnit:
 		unit := unitFor(id)
@@ -99,21 +100,26 @@ func (runtime *CommandRuntime) Prepare(ctx context.Context, id templatecatalog.I
 }
 
 type commandRuntimeTransaction struct {
-	gate      func(context.Context) error
-	id        templatecatalog.ID
-	runner    Runner
-	wasActive bool
-	path      string
-	verifyAPI func(context.Context, string) error
+	id               templatecatalog.ID
+	runner           Runner
+	wasActive        bool
+	path             string
+	verifyAPI        func(context.Context, string) error
+	networkInstalled func() (bool, error)
+}
+
+// BeforeReplace stops the old unit while systemd still has its old mark/table
+// and cleanup executable. Called only after durable safe-apply evidence exists.
+func (transaction *commandRuntimeTransaction) BeforeReplace(ctx context.Context) error {
+	if transaction.id == templatecatalog.TProxyUnit {
+		return transaction.run(ctx, systemctlBinary, "stop", "xray-tproxy-routing.service")
+	}
+	return nil
 }
 
 func (transaction *commandRuntimeTransaction) Apply(ctx context.Context, path string) error {
 	transaction.path = path
-	if transaction.gate != nil && (transaction.id == templatecatalog.Nftables || transaction.id == templatecatalog.TProxyUnit) {
-		if err := transaction.gate(ctx); err != nil {
-			return err
-		}
-	}
+
 	switch transaction.id {
 	case templatecatalog.XrayConfig:
 		return transaction.run(ctx, systemctlBinary, "restart", "xray.service")
@@ -121,6 +127,9 @@ func (transaction *commandRuntimeTransaction) Apply(ctx context.Context, path st
 		return transaction.applyNft(ctx, path)
 	case templatecatalog.TProxyUnit:
 		if err := transaction.run(ctx, systemctlBinary, "daemon-reload"); err != nil {
+			return err
+		}
+		if err := transaction.run(ctx, networkBinary, "adopt"); err != nil {
 			return err
 		}
 		return transaction.run(ctx, systemctlBinary, "restart", "xray-tproxy-routing.service")
@@ -155,9 +164,6 @@ func (transaction *commandRuntimeTransaction) Healthy(ctx context.Context) error
 	case templatecatalog.TProxyUnit:
 		if err := transaction.run(ctx, systemctlBinary, "is-active", "--quiet", "xray-tproxy-routing.service"); err != nil {
 			return err
-		}
-		if transaction.gate != nil {
-			return transaction.gate(ctx)
 		}
 		return nil // arbitrary native command effects and LAN forwarding remain unchecked
 	case templatecatalog.Sysctl:
@@ -231,7 +237,34 @@ func (transaction *commandRuntimeTransaction) applyNft(ctx context.Context, path
 	if err = transaction.run(ctx, nftBinary, "--check", "--file", batch.Name()); err != nil {
 		return err
 	}
-	return transaction.run(ctx, nftBinary, "--file", batch.Name())
+	if err = transaction.run(ctx, nftBinary, "--file", batch.Name()); err != nil {
+		return err
+	}
+	// The shipped profile explicitly opts into its fixed native lifecycle.
+	// Resume only the already-loaded candidate: restarting the unit here would
+	// re-read the OLD durable file before the safe-apply confirmation.
+	if bytes.Contains(raw, []byte("\n# xray-tproxy:lifecycle v1\n")) {
+		installed := transaction.networkInstalled
+		if installed == nil {
+			installed = func() (bool, error) {
+				_, err := os.Stat(networkBinary)
+				if os.IsNotExist(err) {
+					return false, nil
+				}
+				return err == nil, err
+			}
+		}
+		present, err := installed()
+		if err != nil {
+			return err
+		}
+		// First native adoption loads the off profile before installing lifecycle.
+		if !present {
+			return nil
+		}
+		return transaction.run(ctx, networkBinary, "resume")
+	}
+	return nil
 }
 
 func unitFor(id templatecatalog.ID) string {

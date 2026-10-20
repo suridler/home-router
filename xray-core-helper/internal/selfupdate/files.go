@@ -352,7 +352,20 @@ func Targets(bundle string, web bool) []Target {
 		{ManifestPath, filepath.Join(bundle, "release.json"), 0644},
 		{"/etc/sysusers.d/xray-core-helper.conf", filepath.Join(h, "packaging/sysusers.d/xray-core-helper.conf"), 0644},
 		{"/etc/tmpfiles.d/xray-core-helper.conf", filepath.Join(h, "packaging/tmpfiles.d/xray-core-helper.conf"), 0644},
-		{"/usr/local/libexec/xray-core-helper-nft-load", filepath.Join(h, "packaging/xray-core-helper-nft-load.py"), 0755},
+	}
+	// Releases predating native lifecycle have none of these factory sources.
+	// They remain installable; active native files are never downgrade targets.
+	// A partial group remains in the inventory so preparation rejects it.
+	native := []Target{
+		{"/usr/share/xray-core-helper/native/xray-tproxy-network.py", filepath.Join(h, "packaging/xray-tproxy-network.py"), 0644},
+		{"/usr/share/xray-core-helper/native/50-tproxy.conf", filepath.Join(h, "packaging/systemd/50-tproxy.conf"), 0644},
+		{"/usr/share/xray-core-helper/native/xray-tproxy-sysctl.service", filepath.Join(h, "packaging/systemd/xray-tproxy-sysctl.service"), 0644},
+	}
+	for _, target := range native {
+		if _, err := os.Lstat(target.Source); !os.IsNotExist(err) {
+			v = append(v, native...)
+			break
+		}
 	}
 	for _, unit := range []string{"xray-core-helper.service", "xray-core-helper-nft-commit.service", "xray-core-helper-sysctl.service", "xray-core-helper-rollback.service", "xray-core-helper-rollback.timer"} {
 		v = append(v, Target{"/etc/systemd/system/" + unit, filepath.Join(h, "packaging/systemd", unit), 0644})

@@ -19,7 +19,7 @@ type Installation struct {
 	AssetDir string `json:"assetDir"`
 }
 
-var ErrInstallation = errors.New("xray_installation_unavailable: require trusted direct ExecStart and explicit XRAY_LOCATION_ASSET; unsupported environment or paths")
+var ErrInstallation = errors.New("xray_installation_unavailable: require direct absolute ExecStart and explicit XRAY_LOCATION_ASSET; unsupported environment or paths")
 
 // Resolve reads effective unit properties without starting either service.
 // Only a conservative subset of systemd environment syntax is supported.
@@ -178,8 +178,11 @@ func assetAssignment(raw string) (string, bool, error) {
 	return value, found, nil
 }
 
-// TrustedPath rejects symlinks and paths writable by non-root users. Missing
-// leaf files are allowed for explicit first setup, but their parents must exist.
+// TrustedPath enforces the direct-path contract: the path must be absolute and
+// canonical, no component may be a symlink, and parents must be directories.
+// Existing owner, group and mode settings belong to the administrator and are
+// never judged here. Missing leaf files are allowed for explicit first setup,
+// but their parents must exist. Executables must be regular executable files.
 func TrustedPath(path string, executable bool) error {
 	if !absolute(path) {
 		return ErrInstallation
@@ -192,14 +195,14 @@ func TrustedPath(path string, executable bool) error {
 		if err != nil {
 			return ErrInstallation
 		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != 0 || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
+		if info.Mode()&os.ModeSymlink != 0 {
 			return ErrInstallation
 		}
-		if current == path && executable && (!info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0) {
-			return ErrInstallation
-		}
-		if current != path && !info.IsDir() {
+		if current == path {
+			if executable && (!info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0) {
+				return ErrInstallation
+			}
+		} else if !info.IsDir() {
 			return ErrInstallation
 		}
 		if current == "/" {

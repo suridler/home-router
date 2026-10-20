@@ -101,8 +101,15 @@ func (transport *inProcessTransport) RoundTrip(request *http.Request) (*http.Res
 			return nil, err
 		}
 	}
+	// A real HTTP server always supplies a non-nil Body, including for GET.
+	// Client requests may have nil Body. Preserve the caller's request while
+	// providing the same contract to the in-process server middleware.
+	serverRequest := request.Clone(request.Context())
+	if serverRequest.Body == nil {
+		serverRequest.Body = http.NoBody
+	}
 	recorder := newResponseRecorder()
-	transport.state.handler.ServeHTTP(recorder, request)
+	transport.state.handler.ServeHTTP(recorder, serverRequest)
 	response := recorder.result(request)
 	// The setup response must be delivered even if normal-mode composition
 	// fails immediately; the next request retries reinitialization and reports

@@ -9,7 +9,7 @@ import (
 	"home-router/xray-core-helper/internal/nativebinding"
 )
 
-func TestBootGateUsesConfiguredNetworkAndRejectsDrift(t *testing.T) {
+func TestExplicitDiagnosticUsesConfiguredNetworkAndRejectsDrift(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "helper.toml")
 	if err := os.WriteFile(path, []byte("[network]\ninterface = 'br-lan'\naddress = '10.0.0.1'\nipv4_prefix = '10.0.0.0/24'\nintercept_mark = 2\npolicy_table = 321\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -38,12 +38,12 @@ func TestBootGateUsesConfiguredNetworkAndRejectsDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := checkDeclarations(context.Background(), docs, nil, path, identity); err == nil {
-		t.Fatal("native/network drift accepted at boot")
+		t.Fatal("native/network drift accepted during diagnostics")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkDeclarations(context.Background(), docs, nil, path, identity); err == nil {
-		t.Fatal("missing config silently defaulted at boot")
+		t.Fatal("missing config silently defaulted during diagnostics")
 	}
 }

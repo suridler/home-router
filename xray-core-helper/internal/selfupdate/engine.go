@@ -256,7 +256,16 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 	op.Commit = b.Commit
 	op.MinimumVersion = b.MinimumInstallableVersion
 	if webEnabled {
-		if err = e.command(ctx, "/usr/bin/npm", "--prefix", filepath.Join(bundleDir, "xrayui-web"), "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", filepath.Join(e.Store.Root, "npm-cache"), "--userconfig", "/dev/null", "--globalconfig", "/dev/null"); err != nil {
+		// npm rejects loading one path as both user and global configuration.
+		// Keep distinct empty files so host npm settings remain excluded.
+		userConfig := filepath.Join(e.Store.Dir(op.ID), "npm-user.conf")
+		globalConfig := filepath.Join(e.Store.Dir(op.ID), "npm-global.conf")
+		for _, path := range []string{userConfig, globalConfig} {
+			if err = atomicWrite(path, nil, 0600); err != nil {
+				return fail(err)
+			}
+		}
+		if err = e.command(ctx, "/usr/bin/npm", "--prefix", filepath.Join(bundleDir, "xrayui-web"), "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", filepath.Join(e.Store.Root, "npm-cache"), "--userconfig", userConfig, "--globalconfig", globalConfig); err != nil {
 			return fail(errors.New("web_dependencies_failed: npm preparation failed before service shutdown"))
 		}
 		// npm creates .bin links; they are unnecessary to run the web server.
@@ -765,6 +774,13 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 		return err
 	}
 	if op.Web {
+		// Type=simple reports the daemon started before it has created web.env.
+		// The HTTP listener is opened after web runtime preparation completes.
+		if e.Check == nil {
+			if err = e.verifyServices(ctx, op, false); err != nil {
+				return err
+			}
+		}
 		if err = e.unit(ctx, "start", "xrayui-web.service"); err != nil {
 			return err
 		}
@@ -788,6 +804,11 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 func (e *Engine) initialize(ctx context.Context, op *Operation, bundle string) error {
 	var err error
 	h := filepath.Join(bundle, "xray-core-helper")
+	for _, dir := range []string{"/usr/local/libexec/xray-tproxy", "/run/xray-tproxy"} {
+		if err = os.MkdirAll(e.Files.Path(dir), 0755); err != nil {
+			return err
+		}
+	}
 	if err = e.command(ctx, "/usr/bin/systemd-sysusers", filepath.Join(h, "packaging/sysusers.d/xray-core-helper.conf")); err != nil {
 		return err
 	}
@@ -817,6 +838,10 @@ func (e *Engine) initialize(ctx context.Context, op *Operation, bundle string) e
 	return e.unit(ctx, "enable", "xray-core-helper.service")
 }
 func (e *Engine) verify(ctx context.Context, op *Operation) error {
+	return e.verifyServices(ctx, op, op.Web)
+}
+
+func (e *Engine) verifyServices(ctx context.Context, op *Operation, checkWeb bool) error {
 	cfg, err := bootstrap.Load(e.Files.Path(e.ConfigPath))
 	if err != nil {
 		return errors.New("verify_settings_failed")
@@ -848,7 +873,7 @@ func (e *Engine) verify(ctx context.Context, op *Operation) error {
 			resp.Body.Close()
 			ok = resp.StatusCode == 200 && de == nil && (health.Status == "ok" || health.Status == "setup_required") && (expected == "" || health.Version == expected)
 		}
-		if ok && op.Web {
+		if ok && checkWeb {
 			host := cfg.Web.Host
 			if host == "0.0.0.0" || host == "::" {
 				host = "127.0.0.1"

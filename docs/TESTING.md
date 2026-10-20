@@ -9,7 +9,7 @@ Unit/fixture PASS не означает успешную установку, for
 | --- | --- | --- |
 | Go/Node unit | Контракты, edits, redaction, recovery с fakes | Development |
 | Python packaging | Архивы, загрузчик, T8 runner | Development |
-| T8 check | Services, ready, permissions, templates, confinement, network gate | Disposable server |
+| T8 check | Services, ready, socket permissions, templates, confinement, explicit network diagnostics | Disposable server |
 | T8 smoke | Sysctl confirm, grouped rollback, recovery | Disposable с консолью |
 | T8 post-reboot | Новый boot ID, baseline/metadata, clear recovery | Тот же сервер/audit |
 | CLI/Web clean install | Пользовательский процесс установки | Отдельные свежие экземпляры |
@@ -61,6 +61,54 @@ Unit/fixture PASS не означает успешную установку, for
 - Авторизация/browser security и hardened acceptance после реализации.
 
 Успешный staged T8 закрывает свой прогон, а не автоматически всю матрицу.
+
+## Приёмка независимого lifecycle N9
+
+Новая схема ещё требует серверной приёмки; прежние T8 результаты относятся
+к прежнему lifecycle. Unit/fixture проверки не закрывают следующие сценарии:
+
+1. Холодная загрузка при остановленном/недоступном helper: Xray и включённая
+   routing unit активны; серверный HTTPS и LAN TCP/UDP работают.
+2. Штатные stop/start/restart Xray и аварийный выход: оба nft jump и точные
+   policy rule/route выключаются при остановке и возвращаются после старта.
+3. Отказ включения nft/routing: Xray получает failed start, причина видна в
+   журнале, частичная активация очищена. Повторный off безопасен.
+4. Ручной nft reload при работающем и остановленном Xray: перехват выключен;
+   явный restart routing при работающем Xray восстанавливает оба jump.
+5. Повторный apply, drift вспомогательных assets, rollback шести файлов,
+   удаление исходно отсутствовавших файлов и сохранность native-сети при
+   обновлении/удалении helper. Исторический трёхфайловый recovery остаётся читаемым.
+6. Чужие nft-таблицы/маршруты и настройки forwarding сохраняются. Существующие
+   соединения через Xray при остановке могут оборваться; DNS зависит от схемы сервера.
+
+Fault injection, uninstall и stop/crash выполняйте только на disposable сервере
+с независимой консолью. Read-only диагностика — в [OPERATIONS](OPERATIONS.md).
+Не останавливайте рабочий роутер ради проверки и не называйте новую схему
+принятой без зафиксированного результата boot/server/LAN.
+
+## Локальная регрессия N9, 20 октября 2026
+
+Кандидат `helper-v0.2.0-beta.4`. Изменения проверены без остановки Xray,
+изменения маршрутов или записи в системные файлы рабочего сервера.
+
+- `go test ./...`, `go test -race ./...`, `go build ./cmd/...`, `go vet ./...`.
+- `gofmt -d ./cmd ./internal`, `git diff --check`, `bash -n` изменённых shell-скриптов.
+- `python3 -B -m unittest discover -s packaging -p 'test_*.py'`: 101 тест.
+- Native adapter: 34 hermetic теста; ошибки on/off, повторная очистка, сохранение
+  чужих объектов, маркеры, блокировка, отмена позднего start, resume кандидата,
+  подключение работающего Xray. Часть подготовлена DeepSeek Flash в отдельной
+  копии; diff прочитан и тесты независимо запущены Codex.
+- Реальные unit-файлы и drop-in успешно загружены `systemd-analyze verify --root`
+  во временном корне. Это проверка синтаксиса/графа, без запуска unit.
+- Setup и safe-apply проверяют auxiliary inventory, drift, согласованное
+  восстановление шести файлов, старые трёхфайловые recovery evidence и очистку
+  старой routing unit до замены её параметров. Setup перезагружает определения
+  systemd после commit и восстановления файлов.
+
+`unshare -Urn` на development-хосте запрещён (`uid_map: Operation not permitted`).
+Пакетная проверка в namespace и реальный systemd lifecycle здесь не выполнялись.
+Cold boot, отсутствие helper, crash Xray и LAN TCP/UDP/DNS остаются в матрице
+серверной приёмки выше. Эти ограничения не считаются успешным тестом.
 
 ## Дополнительные harness
 

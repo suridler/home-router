@@ -48,6 +48,9 @@ nft add chain inet unrelated sentinel
 nft list table inet unrelated > "$scratch/unrelated.before"
 nft --check --file "$batch"
 nft --file "$batch"
+# Persistent profile must not intercept until Xray lifecycle enables both jumps.
+[[ $(nft -j list chain inet xray prerouting | jq '[.nftables[] | .rule? // empty] | length') == 0 ]]
+printf 'add rule inet xray prerouting jump prerouting_proxy\nadd rule inet xray output jump output_proxy\n' | nft --file -
 count() { nft -j list table inet xray | jq '[.nftables[] | .rule?.expr[]? | .counter?.packets // empty] | add // 0'; }
 send() { ip netns exec "$1" bash -c 'printf fixture > /dev/udp/$1/443' bash "$2"; sleep 0.2; }
 before=$(count); send lan 198.51.100.1; after=$(count)
@@ -70,6 +73,9 @@ printf 'add table inet xray\ndelete table inet xray\ntable inet xray { invalid_n
 if nft --file "$scratch/rejected.nft" > /dev/null 2>&1; then exit 1; fi
 nft list table inet xray > "$scratch/managed.after"
 cmp "$scratch/managed.before" "$scratch/managed.after"
+# Disable both entry points atomically while leaving the base profile present.
+printf 'flush chain inet xray prerouting\nflush chain inet xray output\n' | nft --file -
+[[ $(nft -j list chain inet xray output | jq '[.nftables[] | .rule? // empty] | length') == 0 ]]
 nft --file "$batch"
 nft list table inet unrelated > "$scratch/unrelated.after"
 cmp "$scratch/unrelated.before" "$scratch/unrelated.after"

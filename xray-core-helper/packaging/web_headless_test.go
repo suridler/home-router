@@ -160,6 +160,7 @@ esac
 	}
 	source = strings.ReplaceAll(source, "/usr/local/", root+"/host/usr/local/")
 	source = strings.ReplaceAll(source, "/var/", root+"/host/var/")
+	source = strings.ReplaceAll(source, "/run/", root+"/host/run/")
 	script := filepath.Join(root, "install.sh")
 	if err = os.WriteFile(script, []byte(source), 0700); err != nil {
 		t.Fatal(err)

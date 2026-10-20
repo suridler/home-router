@@ -105,7 +105,9 @@ var lifecycleCandidateFiles = map[string]string{
 	"release.json":                                                           `{"schemaVersion":1,"version":"helper-v2.0.0","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","os":"linux","arch":"amd64","binaries":{}}` + "\n",
 	"xray-core-helper/packaging/sysusers.d/xray-core-helper.conf":            "new-sysusers\n",
 	"xray-core-helper/packaging/tmpfiles.d/xray-core-helper.conf":            "new-tmpfiles\n",
-	"xray-core-helper/packaging/xray-core-helper-nft-load.py":                "#!/usr/bin/env python3\n",
+	"xray-core-helper/packaging/xray-tproxy-network.py":                      "#!/usr/bin/python3\n",
+	"xray-core-helper/packaging/systemd/50-tproxy.conf":                      "new-native-dropin\n",
+	"xray-core-helper/packaging/systemd/xray-tproxy-sysctl.service":          "new-native-sysctl\n",
 	"xray-core-helper/packaging/systemd/xray-core-helper.service":            "new-helper-unit\n",
 	"xray-core-helper/packaging/systemd/xray-core-helper-nft-commit.service": "new-nft-commit-unit\n",
 	"xray-core-helper/packaging/systemd/xray-core-helper-sysctl.service":     "new-sysctl-unit\n",
@@ -798,4 +800,27 @@ func snapshotEntryPath(t *testing.T, entries []Entry, path string) string {
 	}
 	t.Fatalf("snapshot entry %q not found", path)
 	return ""
+}
+
+func TestNativeSourcesInventoryOlderReleaseAndPartialGroup(t *testing.T) {
+	bundle := t.TempDir()
+	count := func() int {
+		n := 0
+		for _, target := range Targets(bundle, false) {
+			if strings.HasPrefix(target.Path, "/usr/share/xray-core-helper/native/") {
+				n++
+			}
+			if strings.HasPrefix(target.Path, "/usr/local/libexec/xray-tproxy/") || target.Path == "/etc/systemd/system/xray.service.d/50-tproxy.conf" {
+				t.Fatal("selfupdate must preserve active native lifecycle", target)
+			}
+		}
+		return n
+	}
+	if n := count(); n != 0 {
+		t.Fatal("old release unexpectedly requires new native sources", n)
+	}
+	writeLifecycleFile(t, filepath.Join(bundle, "xray-core-helper/packaging/xray-tproxy-network.py"), "script")
+	if n := count(); n != 3 {
+		t.Fatal("partial group must retain all requirements", n)
+	}
 }

@@ -72,15 +72,20 @@ func TestGroupCaptureFailureNeverPreparesOrActivates(t *testing.T) {
 }
 
 func TestGroupRestoreFailureMatrixAndNewBoot(t *testing.T) {
-	for _, failed := range []templatecatalog.ID{templatecatalog.Nftables, templatecatalog.Sysctl, templatecatalog.TProxyUnit} {
+	for _, failedFile := range baselineFixture() {
+		failed := failedFile.TemplateID
+		requestID := failed
+		if !systemMember(requestID) {
+			requestID = templatecatalog.TProxyUnit
+		}
 		t.Run(string(failed), func(t *testing.T) {
 			s, g := groupFixture(t)
 			ctx := context.Background()
-			operation, err := s.Begin(ctx, failed, 0)
+			operation, err := s.Begin(ctx, requestID, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if files, err := s.store.Baseline(ctx, operation.ID); err != nil || len(files) != 3 {
+			if files, err := s.store.Baseline(ctx, operation.ID); err != nil || len(files) != 6 {
 				t.Fatal("activation without complete manifest", err)
 			}
 			g.failRestore = failed
@@ -98,7 +103,13 @@ func TestGroupRestoreFailureMatrixAndNewBoot(t *testing.T) {
 			if err := s.store.db.QueryRowContext(ctx, `SELECT count(*) FROM safe_apply_restore WHERE transaction_id=?`, operation.ID).Scan(&progress); err != nil {
 				t.Fatal(err)
 			}
-			wantProgress := map[templatecatalog.ID]int{templatecatalog.Nftables: 0, templatecatalog.Sysctl: 1, templatecatalog.TProxyUnit: 2}[failed]
+			wantProgress := 0
+			for _, file := range baselineFixture() {
+				if file.TemplateID == failed {
+					break
+				}
+				wantProgress++
+			}
 			if progress != wantProgress {
 				t.Fatalf("durable restore progress=%d want=%d", progress, wantProgress)
 			}

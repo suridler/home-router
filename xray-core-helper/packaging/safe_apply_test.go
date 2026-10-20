@@ -24,10 +24,10 @@ func TestSafeApplyTimerIsFixedAndStartsHelperForRollback(t *testing.T) {
 		}
 	}
 }
-func TestHelperStartsBeforeManagedRuntimeAndHasOnlyFixedWrites(t *testing.T) {
+func TestHelperOrdersOnlyWebAndHasOnlyFixedWrites(t *testing.T) {
 	unit := readAsset(t, "systemd", "xray-core-helper.service")
-	if !hasLine(unit, "Before=xray.service xray-tproxy-routing.service xrayui-web.service") {
-		t.Fatal("missing early recovery ordering")
+	if !hasLine(unit, "Before=xrayui-web.service") {
+		t.Fatal("missing web ordering")
 	}
 	for _, path := range []string{"/etc/xray-core-helper", "/etc/systemd/system", "/etc/sysctl.d"} {
 		if !strings.Contains(unit, path) {

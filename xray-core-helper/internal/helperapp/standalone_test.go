@@ -2,12 +2,72 @@ package helperapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"home-router/xray-core-helper/internal/httpapi"
+	"home-router/xray-core-helper/internal/setup"
 )
+
+type standaloneAdoptService struct {
+	httpapi.SetupService
+	adopted bool
+}
+
+func (s *standaloneAdoptService) Status() setup.ConfigProbe {
+	return setup.ConfigProbe{State: setup.ConfigExisting, SetupRequired: !s.adopted, Fingerprint: "current"}
+}
+
+func (s *standaloneAdoptService) Adopt(_ context.Context, fingerprint string) (setup.Result, error) {
+	if fingerprint != "current" {
+		return setup.Result{}, errors.New("unexpected fingerprint")
+	}
+	s.adopted = true
+	return setup.Result{Status: "configured_direct"}, nil
+}
+
+func TestInProcessSetupHandlesBodylessClientRequests(t *testing.T) {
+	service := &standaloneAdoptService{}
+	transport := newInProcessTransport(context.Background(), "unused", "test", func(context.Context, string, string) (*inProcessState, error) {
+		return &inProcessState{handler: httpapi.NewSetupServer("test", service).Handler}, nil
+	})
+	if err := transport.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	client := &http.Client{Transport: transport}
+	request, err := http.NewRequest(http.MethodGet, "http://helper/v1/setup", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe struct {
+		Fingerprint string `json:"configFingerprint"`
+	}
+	err = json.NewDecoder(response.Body).Decode(&probe)
+	response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || probe.Fingerprint != "current" {
+		t.Fatalf("bodyless setup GET failed: response=%+v err=%v", probe, err)
+	}
+	if request.Body != nil {
+		t.Fatal("transport mutated the caller's request")
+	}
+	response, err = client.Post("http://helper/v1/setup/adopt", "application/json", strings.NewReader(`{"configFingerprint":"current"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || !service.adopted {
+		t.Fatalf("adoption failed: status=%d", response.StatusCode)
+	}
+}
 
 func TestInProcessTransportReinitializesAfterSetupCompletion(t *testing.T) {
 	ctx := context.Background()

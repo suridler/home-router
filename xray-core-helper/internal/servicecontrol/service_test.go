@@ -215,23 +215,21 @@ func TestExecuteReturnsTypedBoundedCommandFailures(t *testing.T) {
 	}
 }
 
-func TestEnableOnlyRoutingUnitAndNeverWhenGatewayUnready(t *testing.T) {
-	runner := &runnerFake{}
-	service := &Service{runner: runner, gate: func(context.Context) error { return errors.New("unready") }}
+func TestRoutingActionsDoNotRequireGatewayDiagnostics(t *testing.T) {
+	for _, action := range []Action{ActionStart, ActionRestart, ActionEnable} {
+		t.Run(string(action), func(t *testing.T) {
+			runner := &runnerFake{}
+			service := &Service{runner: runner}
+			if _, err := service.Execute(context.Background(), UnitTProxy, action); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(runner.calls, [][]string{{string(action), string(UnitTProxy)}}) {
+				t.Fatal(runner.calls)
+			}
+		})
+	}
+	service := &Service{runner: &runnerFake{}}
 	if _, err := service.Execute(context.Background(), UnitXray, ActionEnable); err == nil {
 		t.Fatal("enabled arbitrary unit")
-	}
-	if _, err := service.Execute(context.Background(), UnitTProxy, ActionEnable); err == nil {
-		t.Fatal("enabled unready gateway")
-	}
-	if len(runner.calls) != 0 {
-		t.Fatal("mutated before readiness")
-	}
-	service.gate = func(context.Context) error { return nil }
-	if _, err := service.Execute(context.Background(), UnitTProxy, ActionEnable); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(runner.calls, [][]string{{"enable", "xray-tproxy-routing.service"}}) {
-		t.Fatal(runner.calls)
 	}
 }

@@ -61,20 +61,23 @@ type Result struct {
 }
 
 type Engine struct {
-	network        bootstrap.NetworkConfig
-	renderEnabled  bool
-	mu             sync.Mutex
-	userGeosite    string
-	xrayValues     *xrayconfig.TemplateValues
-	loggingValues  func() bootstrap.LoggingConfig
-	catalog        templatecatalog.Catalog
-	check          CrossCheck
-	backups        BackupStore
-	runtime        Runtime
-	replacer       Replacer
-	hash           func(string) (string, error)
-	buildCandidate func(context.Context, templatecatalog.Entry, bool) (candidate, error)
-	groupPaths     map[templatecatalog.ID]string // test-only fixed-path substitution
+	network           bootstrap.NetworkConfig
+	renderEnabled     bool
+	mu                sync.Mutex
+	userGeosite       string
+	xrayValues        *xrayconfig.TemplateValues
+	loggingValues     func() bootstrap.LoggingConfig
+	catalog           templatecatalog.Catalog
+	check             CrossCheck
+	backups           BackupStore
+	runtime           Runtime
+	replacer          Replacer
+	hash              func(string) (string, error)
+	buildCandidate    func(context.Context, templatecatalog.Entry, bool) (candidate, error)
+	lifecycleAssets   []LifecycleAsset // fixed inventory; injected only by hermetic tests
+	lifecycleBaseline []BaselineFile
+	lifecyclePlans    map[string]lifecyclePrepared
+	groupPaths        map[templatecatalog.ID]string // test-only fixed-path substitution
 }
 
 func NewEngine(check CrossCheck, backups BackupStore, runtime Runtime) (*Engine, error) {

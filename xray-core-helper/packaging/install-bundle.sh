@@ -85,6 +85,7 @@ for stem in xray-core-helper-routing xray-core-helper-errors update-xray-geodata
   rm -f -- "/etc/systemd/system/$stem.timer" "/etc/systemd/system/$stem.service"
 done
 install -d -o root -g root -m 0700 /var/lib/xray-core-helper-update
+install -d -o root -g root -m 0755 /usr/local/libexec/xray-tproxy /run/xray-tproxy
 systemd-sysusers "$helper_root/packaging/sysusers.d/xray-core-helper.conf"
 install -Dm0755 "$build_dir/xray-core-helperd" /usr/local/sbin/xray-core-helperd
 install -Dm0755 "$build_dir/xray-core-helper" /usr/local/bin/xray-core-helper
@@ -113,7 +114,7 @@ if [[ $web_mode == 1 ]]; then
 fi
 # Web is a static unit, never independently enabled at boot.
 if [[ $(systemctl is-enabled xrayui-web.service 2>/dev/null || true) == enabled ]]; then systemctl disable xrayui-web.service; fi
-install -Dm0755 "$helper_root/packaging/xray-core-helper-nft-load.py" /usr/local/libexec/xray-core-helper-nft-load
+# The reviewed native script is installed only by explicit setup/apply.
 # Own exactly one drop-in; leave administrator files untouched.
 dropin=/etc/systemd/system/xray-core-helper.service.d/20-installation-paths.conf
 install -d -o root -g root -m 0755 "$(dirname -- "$dropin")"

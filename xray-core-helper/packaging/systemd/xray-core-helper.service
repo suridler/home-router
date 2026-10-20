@@ -3,7 +3,7 @@ Description=Xray Core Helper privileged control plane
 Documentation=file:/usr/local/share/doc/xray-core-helper/README.md
 Wants=network-online.target
 After=network-online.target
-Before=xray.service xray-tproxy-routing.service xrayui-web.service
+Before=xrayui-web.service
 
 [Service]
 Type=simple
@@ -33,6 +33,10 @@ RestrictRealtime=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/var/lib/xray-core-helper-update
 ReadWritePaths=/run/xray-core-helper /var/lib/xray-core-helper /usr/local/etc/xray /usr/local/share/xray /var/log/xray /etc/xray-core-helper /etc/systemd/system /etc/sysctl.d
+
+
+# Only the installed native lifecycle directory, for atomic replacement.
+ReadWritePaths=/usr/local/libexec/xray-tproxy /run/xray-tproxy
 
 [Install]
 WantedBy=multi-user.target

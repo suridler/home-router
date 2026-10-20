@@ -8,12 +8,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"home-router/xray-core-helper/internal/bootstrap"
 )
@@ -122,6 +129,109 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 		if strings.Contains(call, "xray.service") || strings.Contains(call, "xray-tproxy-routing.service") {
 			t.Fatalf("unexpected data-plane action: %s", call)
 		}
+	}
+}
+
+func TestWebPreparationUsesDistinctEmptyNpmConfigurations(t *testing.T) {
+	for _, failNpm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "npm failure"}[failNpm], func(t *testing.T) {
+			env := newLifecycleEnv(t)
+			writeLifecycleFile(t, env.e.InstallerSource, "installer")
+			env.runner.output = []byte("[Service]\nReadWritePaths=/usr/local/share/xray\n")
+			if failNpm {
+				env.runner.failWith = "/usr/bin/npm "
+			}
+			called := false
+			env.runner.onCall = func(line string) {
+				if !strings.HasPrefix(line, "/usr/bin/npm ") {
+					return
+				}
+				called = true
+				args := strings.Fields(line)
+				configs := make(map[string]string)
+				for i := 0; i+1 < len(args); i++ {
+					if args[i] == "--userconfig" || args[i] == "--globalconfig" {
+						configs[args[i]] = args[i+1]
+					}
+				}
+				if len(configs) != 2 || configs["--userconfig"] == configs["--globalconfig"] {
+					t.Fatalf("npm configuration paths must be distinct: %v", configs)
+				}
+				for _, path := range configs {
+					if !strings.HasPrefix(path, env.e.Store.Root+string(os.PathSeparator)) {
+						t.Fatalf("configuration outside private operation: %s", path)
+					}
+					info, err := os.Lstat(path)
+					if err != nil || !info.Mode().IsRegular() || info.Size() != 0 || info.Mode().Perm() != 0600 {
+						t.Fatalf("configuration must be an empty private regular file: %s (%v)", path, err)
+					}
+				}
+			}
+			op, err := env.e.PrepareLocal(context.Background(), localReleaseFixture(t), nil)
+			if !called || (err != nil) != failNpm {
+				t.Fatalf("called=%v err=%v", called, err)
+			}
+			if failNpm && (op == nil || op.State != "failed" || op.Error != "web_dependencies_failed") {
+				t.Fatalf("missing failure evidence: %#v", op)
+			}
+			for _, call := range env.runner.calls {
+				if strings.Contains(call, "systemctl") {
+					t.Fatalf("preparation changed service state: %s", call)
+				}
+			}
+		})
+	}
+}
+
+func TestWebWaitsForHelperBeforeStarting(t *testing.T) {
+	env := newLifecycleEnv(t)
+	seedLifecycleInstalled(t, env)
+	var helperChecked, webStarted atomic.Bool
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !webStarted.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer web.Close()
+	cfg := bootstrap.Defaults()
+	cfg.Server.Socket = filepath.Join(t.TempDir(), "h.sock")
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(web.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Web.Host = host
+	cfg.Web.Port, _ = strconv.Atoi(port)
+	raw, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLifecycleFile(t, env.fs.Path(bootstrap.DefaultConfigPath), string(raw))
+	op := makeLifecycleOperation(t, env, "prepared", false, true)
+	listener, err := net.Listen("unix", cfg.Server.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		helperChecked.Store(true)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "setup_required", "version": op.TargetVersion + "+" + op.Commit[:12]})
+	})}
+	defer helper.Close()
+	go helper.Serve(listener)
+	env.runner.onCall = func(line string) {
+		if strings.HasPrefix(line, "/usr/bin/systemctl start xrayui-web.service") {
+			if !helperChecked.Load() {
+				t.Error("web started before helper readiness; web.env may not exist yet")
+			}
+			webStarted.Store(true)
+		}
+	}
+	env.e.Check = nil
+	attempt := launchLifecycleAttempt(t, env.e, op, "apply")
+	if err := env.e.Run(context.Background(), op.ID, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if !helperChecked.Load() || !webStarted.Load() {
+		t.Fatal("helper/web verification was skipped")
 	}
 }
 

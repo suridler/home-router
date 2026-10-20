@@ -2,7 +2,6 @@ package templateapply
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,10 +20,14 @@ type commandCall struct {
 type runnerStub struct {
 	calls  []commandCall
 	failAt int
+	onCall func(commandCall) error
 }
 
 func (stub *runnerStub) Run(_ context.Context, executable string, args []string) error {
 	stub.calls = append(stub.calls, commandCall{executable, append([]string(nil), args...)})
+	if stub.onCall != nil {
+		return stub.onCall(stub.calls[len(stub.calls)-1])
+	}
 	return nil
 }
 
@@ -35,7 +38,7 @@ func TestRuntimeUsesOnlyFixedCommandsPerTemplate(t *testing.T) {
 		want []commandCall
 	}{
 		{templatecatalog.XrayConfig, "/usr/local/etc/xray/config.json", []commandCall{{systemctlBinary, []string{"is-active", "--quiet", "xray.service"}}, {systemctlBinary, []string{"restart", "xray.service"}}, {systemctlBinary, []string{"is-active", "--quiet", "xray.service"}}}},
-		{templatecatalog.TProxyUnit, "/etc/systemd/system/xray-tproxy-routing.service", []commandCall{{systemctlBinary, []string{"is-active", "--quiet", "xray-tproxy-routing.service"}}, {systemctlBinary, []string{"daemon-reload"}}, {systemctlBinary, []string{"restart", "xray-tproxy-routing.service"}}, {systemctlBinary, []string{"is-active", "--quiet", "xray-tproxy-routing.service"}}}},
+		{templatecatalog.TProxyUnit, "/etc/systemd/system/xray-tproxy-routing.service", []commandCall{{systemctlBinary, []string{"is-active", "--quiet", "xray-tproxy-routing.service"}}, {systemctlBinary, []string{"daemon-reload"}}, {networkBinary, []string{"adopt"}}, {systemctlBinary, []string{"restart", "xray-tproxy-routing.service"}}, {systemctlBinary, []string{"is-active", "--quiet", "xray-tproxy-routing.service"}}}},
 		{templatecatalog.Sysctl, "/etc/sysctl.d/99-xray.conf", []commandCall{{systemctlBinary, []string{"start", "xray-core-helper-sysctl.service"}}}},
 	}
 	for _, test := range tests {
@@ -124,21 +127,57 @@ func TestRuntimeRejectsUnknownTemplateBeforeCommand(t *testing.T) {
 	}
 }
 
-func TestActivationGateStopsNetworkCommandsBeforeMutation(t *testing.T) {
-	for _, id := range []templatecatalog.ID{templatecatalog.Nftables, templatecatalog.TProxyUnit} {
-		runner := &runnerStub{}
-		runtime, _ := newCommandRuntime(runner)
-		runtime.gate = func(context.Context) error { return errors.New("not ready") }
-		tx, err := runtime.Prepare(context.Background(), id)
-		if err != nil {
-			t.Fatal(err)
+func TestN9CandidateResumeDoesNotReloadOldDurableNft(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidate.nft")
+	os.WriteFile(path, []byte(nativeblock.Begin+"\n# xray-tproxy:lifecycle v1\ntable inet xray {}\n"+nativeblock.End+"\n"), 0600)
+	runner := &runnerStub{}
+	runtime, _ := newCommandRuntime(runner)
+	runtime.networkInstalled = func() (bool, error) { return true, nil }
+	tx, _ := runtime.Prepare(context.Background(), templatecatalog.Nftables)
+	if err := tx.Apply(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 3 || runner.calls[2].executable != networkBinary || !reflect.DeepEqual(runner.calls[2].args, []string{"resume"}) {
+		t.Fatal(runner.calls)
+	}
+	for _, call := range runner.calls {
+		if call.executable == systemctlBinary {
+			t.Fatal("candidate activation restarted unit and would reload old durable file")
 		}
-		before := len(runner.calls)
-		if tx.Apply(context.Background(), "/unused") == nil {
-			t.Fatal("unready gateway accepted")
+	}
+}
+
+func TestRoutingQuiescesBeforeReplacingParameters(t *testing.T) {
+	r := &runnerStub{}
+	runtime, _ := newCommandRuntime(r)
+	tx, _ := runtime.Prepare(context.Background(), templatecatalog.TProxyUnit)
+	q := tx.(interface{ BeforeReplace(context.Context) error })
+	if err := q.BeforeReplace(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.calls[len(r.calls)-1]; !reflect.DeepEqual(got.args, []string{"stop", "xray-tproxy-routing.service"}) {
+		t.Fatal(got)
+	}
+	for _, call := range r.calls {
+		if reflect.DeepEqual(call.args, []string{"daemon-reload"}) {
+			t.Fatal("old parameters reloaded before cleanup")
 		}
-		if len(runner.calls) != before {
-			t.Fatal("commands executed before readiness")
-		}
+	}
+}
+
+func TestFirstNativeNftAdoptionLoadsOffProfileWithoutLifecycleBinary(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "candidate.nft")
+	if err := os.WriteFile(p, []byte(nativeblock.Begin+"\n# xray-tproxy:lifecycle v1\ntable inet xray {}\n"+nativeblock.End+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r := &runnerStub{}
+	runtime, _ := newCommandRuntime(r)
+	runtime.networkInstalled = func() (bool, error) { return false, nil }
+	tx, _ := runtime.Prepare(context.Background(), templatecatalog.Nftables)
+	if err := tx.Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) != 2 {
+		t.Fatal("initial adoption must only check/load the off profile", r.calls)
 	}
 }

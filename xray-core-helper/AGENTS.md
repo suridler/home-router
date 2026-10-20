@@ -38,6 +38,12 @@ implementation before changing a public contract.
 
 ## Security rules
 
+- Do not act as a host security scanner: existing system-file or parent-directory
+  ownership and permission bits are not readiness/setup/apply criteria and must
+  not trigger security warnings. Respect administrator-managed settings; report
+  actual access failures, validate configuration and check bound parameters.
+  Do not automatically fix existing ownership or permissions. Installation may
+  set required ownership and permissions for helper's own installed files.
 - Treat all Xray configuration and command output as secret-bearing.
 - Never return or log raw config, UUIDs, passwords, private keys, tokens,
   Reality short IDs, full VLESS URIs, or secret headers.

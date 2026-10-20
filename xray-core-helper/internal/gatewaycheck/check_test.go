@@ -1,6 +1,7 @@
 package gatewaycheck
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -26,5 +27,15 @@ func TestSocketEvidenceRequiresOwnedWildcardPortAndCorrectState(t *testing.T) {
 	}
 	if ownsListener([]byte("malformed\n"), nil, 52345, "tcp") {
 		t.Fatal("malformed table accepted")
+	}
+}
+
+func TestDiagnosticStagePreservesNotReadyIdentity(t *testing.T) {
+	err := stageError("api_unavailable")
+	if !errors.Is(err, ErrNotReady) {
+		t.Fatal("diagnostic lost error identity", err)
+	}
+	if err.Error() != "xray_gateway_not_ready: api_unavailable" {
+		t.Fatal(err)
 	}
 }

@@ -1,35 +1,21 @@
 [Unit]
-Description=Xray TProxy policy routing
-BindsTo=xray.service
-PartOf=xray.service
-After=xray.service
+Description=Xray TProxy interception and policy routing
+# A boot request cannot intercept before Xray reaches its post-start hook.
+ConditionPathExists=/run/xray-tproxy/started
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=180
+TimeoutStopSec=180
 
-# The read-only gate verifies the effective Xray config and owned TCP/UDP sockets.
-# No policy rule is enabled before the receiving side is ready.
-ExecStartPre=/usr/local/bin/xray-core-helper network-check
+# helper:v1 bind rulemark type=uint32 source=helper.network.intercept-mark
+Environment=TPROXY_MARK=${intercept_mark}
+# helper:v1 bind policytable type=uint32 source=helper.network.policy-table
+Environment=TPROXY_TABLE=${policy_table}
 
-# Native profile parameters: all policy commands share these values.
-# helper:v1 bind rulemark type=uint32 source=native.nftables.intercept token="0x1"
-Environment=TPROXY_MARK=0x1
-# helper:v1 bind policytable type=uint32 source=native.literal token="100"
-Environment=TPROXY_TABLE=100
-
-# Only the dedicated confined oneshot writes /proc/sys.
-ExecStartPre=/usr/bin/systemctl start xray-core-helper-sysctl.service
-ExecStartPre=/usr/local/libexec/xray-core-helper-nft-load
-
-ExecStartPre=-/sbin/ip rule del fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
-ExecStartPre=-/sbin/ip route flush table ${TPROXY_TABLE}
-ExecStart=/sbin/ip route add local default dev lo table ${TPROXY_TABLE}
-ExecStart=/sbin/ip rule add fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
-
-# Cleanup also runs when activation fails after a partial start.
-ExecStopPost=-/sbin/ip rule del fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
-ExecStopPost=-/sbin/ip route flush table ${TPROXY_TABLE}
+ExecStart=/usr/local/libexec/xray-tproxy/network on
+ExecStopPost=/usr/local/libexec/xray-tproxy/network off
 
 [Install]
 WantedBy=multi-user.target

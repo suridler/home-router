@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"home-router/xray-core-helper/internal/templateapply"
 	"home-router/xray-core-helper/internal/templatecatalog"
 )
 
@@ -17,7 +18,10 @@ func baselineFixture() []BaselineFile {
 	return []BaselineFile{
 		{TemplateID: templatecatalog.Nftables, Present: true, Content: []byte("# private original\n"), Mode: 0640, UID: 10, GID: 20},
 		{TemplateID: templatecatalog.Sysctl, Content: []byte{}},
+		{TemplateID: templateapply.LifecycleScriptID, Content: []byte{}},
+		{TemplateID: templateapply.LifecycleSysctlID, Content: []byte{}},
 		{TemplateID: templatecatalog.TProxyUnit, Present: true, Content: []byte{}, Mode: 0600},
+		{TemplateID: templateapply.LifecycleDropinID, Content: []byte{}},
 	}
 }
 
@@ -190,5 +194,35 @@ func TestBaselineDatabaseIsPrivateAndRejectsSymlinks(t *testing.T) {
 	if store, err := Open(ctx, link); err == nil {
 		store.Close()
 		t.Fatal("followed database symlink")
+	}
+}
+
+func TestLegacyThreeFileEvidenceIsReadOnlyAndNeverExpanded(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state.sqlite"))
+	defer store.Close()
+	op := beginBaseline(t, store, templatecatalog.TProxyUnit)
+	var legacy []BaselineFile
+	for _, file := range baselineFixture() {
+		if systemMember(file.TemplateID) {
+			legacy = append(legacy, file)
+		}
+	}
+	if err := store.RecordBaseline(ctx, op.ID, legacy); !errors.Is(err, ErrBaseline) {
+		t.Fatal("new incomplete group accepted", err)
+	}
+	for _, file := range legacy {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO safe_apply_baseline(transaction_id,template_id,present,content,mode,uid,gid) VALUES(?,?,?,?,?,?,?)`, op.ID, file.TemplateID, file.Present, file.Content, file.Mode, file.UID, file.GID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.Baseline(ctx, op.ID)
+	if err != nil || len(got) != 3 {
+		t.Fatal("legacy recovery unavailable", err)
+	}
+	for _, file := range got {
+		if !systemMember(file.TemplateID) {
+			t.Fatal("synthesized auxiliary evidence")
+		}
 	}
 }

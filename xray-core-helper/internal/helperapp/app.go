@@ -15,7 +15,6 @@ import (
 
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
-	"home-router/xray-core-helper/internal/gatewaycheck"
 	"home-router/xray-core-helper/internal/httpapi"
 	"home-router/xray-core-helper/internal/scheduler"
 	"home-router/xray-core-helper/internal/servicecontrol"
@@ -149,7 +148,7 @@ func (a *application) buildSetup() (*setupBundle, error) {
 		return nil, err
 	}
 	discovery := setup.NewDiscoverer()
-	engine, err := setup.NewEngine(a.setupStartup.Status(), discovery, a.setupStore, setupXrayStarter{services: services, configPath: a.configPath})
+	engine, err := setup.NewEngine(a.setupStartup.Status(), discovery, a.setupStore, setupXrayStarter{services: services})
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +197,7 @@ func systemRuntimeLifecycle() runtimeLifecycle {
 }
 
 type setupXrayStarter struct {
-	services   *servicecontrol.Service
-	configPath string
+	services servicecontrol.Controller
 }
 
 func (starter setupXrayStarter) Start(ctx context.Context) error {
@@ -210,7 +208,14 @@ func (starter setupXrayStarter) Start(ctx context.Context) error {
 }
 
 func (starter setupXrayStarter) Ready(ctx context.Context) error {
-	return gatewaycheck.Wait(ctx, starter.configPath)
+	result, err := starter.services.Execute(ctx, servicecontrol.UnitXray, servicecontrol.ActionStatus)
+	if err != nil {
+		return err
+	}
+	if result.State != servicecontrol.StateActive {
+		return errors.New("xray_service_not_active")
+	}
+	return nil
 }
 
 func (starter setupXrayStarter) Restore(ctx context.Context, existing bool) error {
@@ -223,7 +228,11 @@ func (starter setupXrayStarter) Restore(ctx context.Context, existing bool) erro
 }
 
 func (starter setupXrayStarter) Ensure(ctx context.Context) (bool, error) {
-	if gatewaycheck.Check(ctx, starter.configPath) == nil {
+	result, err := starter.services.Execute(ctx, servicecontrol.UnitXray, servicecontrol.ActionStatus)
+	if err != nil {
+		return false, err
+	}
+	if result.State == servicecontrol.StateActive {
 		return false, nil
 	}
 	return true, starter.Start(ctx)

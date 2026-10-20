@@ -35,6 +35,13 @@
   DNS/TProxy rules. Web/exporter consume typed helper projections.
 - Native nftables/sysctl/systemd templates own their semantics. Apply only
   explicit bindings with fixed native validators and trusted adapters.
+- Helper is not a host security scanner. Do not reject existing system files,
+  block readiness/setup/apply, or issue security warnings solely because of
+  their owner, group or permission bits (including parent directories).
+  Those settings belong to the administrator. Check actual access needed for
+  the operation, configuration validity and parameter consistency instead.
+  Do not automatically change existing ownership or permissions. Installation
+  may set required ownership and permissions for helper's own installed files.
 - System rollback restores the durable nft/sysctl/unit file group and waits
   for manual reboot. Helper restart is not reboot; verify a new boot ID and
   matching baseline files. Never clear pending evidence to make a test pass.

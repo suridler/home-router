@@ -4,7 +4,6 @@ package servicecontrol
 import (
 	"context"
 	"errors"
-	"home-router/xray-core-helper/internal/gatewaycheck"
 	"strings"
 	"time"
 
@@ -94,7 +93,6 @@ func (runner boundedRunner) Run(ctx context.Context, args []string) ([]byte, err
 }
 
 type Service struct {
-	gate   func(context.Context) error
 	runner commandRunner
 }
 
@@ -127,10 +125,10 @@ func New(configPaths ...string) (*Service, error) {
 	if err != nil {
 		return nil, &Error{Code: ErrorCommandFailed}
 	}
-	return &Service{runner: boundedRunner{runner: runner}, gate: func(ctx context.Context) error { return gatewaycheck.Wait(ctx, configPaths...) }}, nil
+	return &Service{runner: boundedRunner{runner: runner}}, nil
 }
 
-// Execute performs one of the four supported actions on an allowlisted unit.
+// Execute performs an allowlisted action on an allowlisted unit.
 func (service *Service) Execute(ctx context.Context, unit Unit, action Action) (Result, error) {
 	if !validUnit(unit) {
 		return Result{}, &Error{Code: ErrorInvalidUnit}
@@ -145,11 +143,6 @@ func (service *Service) Execute(ctx context.Context, unit Unit, action Action) (
 		return Result{}, &Error{Code: ErrorCanceled}
 	}
 
-	if service.gate != nil && unit == UnitTProxy && (action == ActionStart || action == ActionRestart || action == ActionEnable) {
-		if service.gate(ctx) != nil {
-			return Result{}, &Error{Code: ErrorCommandFailed}
-		}
-	}
 	args := commandArgs(unit, action)
 	stdout, err := service.runner.Run(ctx, args)
 	if err != nil {

@@ -58,11 +58,31 @@ func (engine *Engine) PrepareConfirmed(ctx context.Context, id templatecatalog.I
 	if err != nil || current != candidate.hash {
 		return ConfirmedDescriptor{}, &Error{Code: CodeValidation}
 	}
+	var lifecycle lifecyclePrepared
+	if id == templatecatalog.TProxyUnit {
+		lifecycle, err = engine.prepareLifecycle()
+		if err != nil {
+			return ConfirmedDescriptor{}, err
+		}
+		if len(engine.lifecycleBaseline) > 0 {
+			if len(engine.lifecycleBaseline) != len(lifecycle.prior) {
+				return ConfirmedDescriptor{}, &Error{Code: CodeValidation}
+			}
+			for i, prior := range lifecycle.prior {
+				if !baselineEqual(prior, engine.lifecycleBaseline[i]) {
+					return ConfirmedDescriptor{}, &Error{Code: CodeValidation}
+				}
+			}
+		}
+	}
 	backup, err := engine.backups.Snapshot(ctx, id, templatebackup.SideSystem, templatebackup.StatePending)
 	if err != nil {
 		return ConfirmedDescriptor{}, &Error{Code: CodeBackup}
 	}
-	return ConfirmedDescriptor{TemplateID: id, BackupID: backup.BackupID, CandidateHash: candidate.hash, Generation: backup.Generation}, nil
+	if len(lifecycle.assets) > 0 {
+		engine.lifecyclePlans = map[string]lifecyclePrepared{backup.BackupID: lifecycle}
+	}
+	return ConfirmedDescriptor{TemplateID: id, BackupID: backup.BackupID, CandidateHash: lifecycleHash(candidate.hash, lifecycle), Generation: backup.Generation}, nil
 }
 
 func (engine *Engine) ActivateConfirmed(ctx context.Context, descriptor ConfirmedDescriptor) error {
@@ -77,7 +97,14 @@ func (engine *Engine) ActivateConfirmed(ctx context.Context, descriptor Confirme
 		return err
 	}
 	defer candidate.close()
-	if candidate.hash != descriptor.CandidateHash {
+	var lifecycle lifecyclePrepared
+	if descriptor.TemplateID == templatecatalog.TProxyUnit {
+		lifecycle, err = engine.prepareLifecycle()
+		if err != nil {
+			return err
+		}
+	}
+	if lifecycleHash(candidate.hash, lifecycle) != descriptor.CandidateHash {
 		return &Error{Code: CodeValidation}
 	}
 	runtime, err := engine.runtime.Prepare(ctx, descriptor.TemplateID)
@@ -100,8 +127,26 @@ func (engine *Engine) ActivateConfirmed(ctx context.Context, descriptor Confirme
 		return &Error{Code: CodeReplace}
 	}
 	defer replacement.Close()
-	if replacement.Hash() != descriptor.CandidateHash {
+	if replacement.Hash() != candidate.hash {
 		return &Error{Code: CodeValidation}
+	}
+	if quiescer, ok := runtime.(interface{ BeforeReplace(context.Context) error }); ok {
+		if err = quiescer.BeforeReplace(ctx); err != nil {
+			return effectError(err, CodeRuntime)
+		}
+	}
+	if descriptor.TemplateID == templatecatalog.TProxyUnit && len(lifecycle.assets) > 0 {
+		prior, ok := engine.lifecyclePlans[descriptor.BackupID]
+		if !ok {
+			return &Error{Code: CodeValidation}
+		}
+		// The source digest above is durable; the original target snapshots are
+		// used only to reject drift before this synchronous activation.
+		lifecycle.prior = prior.prior
+		if err = engine.installLifecycle(ctx, lifecycle); err != nil {
+			return err
+		}
+		delete(engine.lifecyclePlans, descriptor.BackupID)
 	}
 	if err = replacement.Commit(); err == nil {
 		err = runtime.Apply(ctx, entry.SystemPath)
@@ -159,7 +204,17 @@ func (engine *Engine) Confirm(ctx context.Context, descriptor ConfirmedDescripto
 		}
 	} else {
 		hash, err := engine.hash(entry.SystemPath)
-		if err != nil || hash != descriptor.CandidateHash {
+		var lifecycle lifecyclePrepared
+		if descriptor.TemplateID == templatecatalog.TProxyUnit {
+			lifecycle, err = engine.prepareLifecycle()
+			if err != nil {
+				return err
+			}
+			if err = engine.verifyLifecycle(lifecycle); err != nil {
+				return err
+			}
+		}
+		if err != nil || lifecycleHash(hash, lifecycle) != descriptor.CandidateHash {
 			return &Error{Code: CodeValidation}
 		}
 	}

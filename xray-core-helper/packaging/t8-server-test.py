@@ -33,6 +33,9 @@ SYSTEM = (
     Path('/etc/nftables.conf'),
     Path('/etc/sysctl.d/99-xray.conf'),
     Path('/etc/systemd/system/xray-tproxy-routing.service'),
+    Path('/usr/local/libexec/xray-tproxy/network'),
+    Path('/etc/systemd/system/xray.service.d/50-tproxy.conf'),
+    Path('/etc/systemd/system/xray-tproxy-sysctl.service'),
 )
 BOOT = Path('/proc/sys/kernel/random/boot_id')
 SERVICES = ('xray-core-helper.service', 'xrayui-web.service', 'xray.service')

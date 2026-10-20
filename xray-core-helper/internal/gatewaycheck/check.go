@@ -1,5 +1,5 @@
-// Package gatewaycheck implements the fixed read-only activation gate shared by
-// interactive activation and the routing unit at boot. It never changes routing.
+// Package gatewaycheck implements explicit read-only gateway diagnostics.
+// It is never a prerequisite for native lifecycle or service-control actions.
 package gatewaycheck
 
 import (
@@ -35,65 +35,59 @@ func Check(ctx context.Context, configPaths ...string) error {
 	}
 	installation, err := xrayservice.New().Resolve(ctx)
 	if err != nil {
-		return ErrNotReady
+		return stageError("installation_discovery")
 	}
 	if xrayservice.New().CheckGatewayLifecycle(ctx) != nil {
-		return ErrNotReady
-	}
-	if installation.CheckTrusted() != nil {
-		return ErrNotReady
+		return stageError("lifecycle_ordering")
 	}
 	raw, err := read(installation.Config)
 	if err != nil {
-		return ErrNotReady
+		return stageError("config_read")
 	}
 	gateway, err := xrayconfig.InspectGateway(raw)
 	if err != nil {
-		return ErrNotReady
+		return stageError("gateway_config")
 	}
 	catalog, err := templatecatalog.ForXrayConfig(installation.Config)
 	if err != nil {
-		return ErrNotReady
+		return stageError("template_catalog")
 	}
 	docs := map[string]*nativebinding.Document{}
 	for _, id := range []templatecatalog.ID{templatecatalog.Nftables, templatecatalog.TProxyUnit} {
 		entry, _ := catalog.Lookup(id)
-		if xrayservice.TrustedPath(entry.SystemPath, false) != nil {
-			return ErrNotReady
-		}
 		content, err := read(entry.SystemPath)
 		if err != nil {
-			return ErrNotReady
+			return stageError("native_read")
 		}
 		doc, err := nativebinding.Parse(content)
 		if err != nil {
-			return ErrNotReady
+			return stageError("native_bindings")
 		}
 		docs[string(id)] = doc
 	}
 	if doc := docs[string(templatecatalog.Nftables)]; doc != nil {
 		if value, err := doc.Scalar("intercept"); err == nil && value == strconv.Itoa(gateway.EgressMark) {
-			return ErrNotReady
+			return stageError("intercept_mark_conflict")
 		}
 	}
 	if checkDeclarations(ctx, docs, raw, configPath, xrayidentity.New().GID) != nil {
-		return ErrNotReady
+		return stageError("binding_consistency")
 	}
 
 	validator, err := transaction.NewXrayValidator(installation.Binary, installation.AssetDir)
 	if err != nil {
-		return ErrNotReady
+		return stageError("validator_configuration")
 	}
 	if validator.Validate(ctx, installation.Config) != nil {
-		return ErrNotReady
+		return stageError("config_validation")
 	}
 	ctl, err := commandrunner.New("/usr/bin/systemctl", 10*time.Second)
 	if err != nil {
-		return ErrNotReady
+		return stageError("service_query_configuration")
 	}
-	status, err := ctl.Run(ctx, []string{"show", "xray.service", "--property=ActiveState,MainPID,ExecMainStartTimestampMonotonic"})
+	status, err := ctl.Run(ctx, []string{"show", "xray.service", "--property=ActiveState,MainPID"})
 	if err != nil {
-		return ErrNotReady
+		return stageError("service_query")
 	}
 	properties := map[string]string{}
 	for _, line := range strings.Split(string(status.Stdout()), "\n") {
@@ -104,41 +98,16 @@ func Check(ctx context.Context, configPaths ...string) error {
 	}
 	pid, err := strconv.Atoi(properties["MainPID"])
 	if err != nil || pid <= 0 || properties["ActiveState"] != "active" {
-		return ErrNotReady
-	}
-	start, err := strconv.ParseUint(properties["ExecMainStartTimestampMonotonic"], 10, 64)
-	if err != nil || start == 0 {
-		return ErrNotReady
-	}
-	uptime, err := read("/proc/uptime")
-	if err != nil {
-		return ErrNotReady
-	}
-	fields := strings.Fields(string(uptime))
-	if len(fields) == 0 {
-		return ErrNotReady
-	}
-	seconds, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return ErrNotReady
-	}
-	info, err := os.Lstat(installation.Config)
-	if err != nil {
-		return ErrNotReady
-	}
-	started := time.Now().Add(-time.Duration(seconds * float64(time.Second))).Add(time.Duration(start) * time.Microsecond)
-	// A newer boot file is not evidence of the configuration loaded by Xray.
-	if info.ModTime().After(started) {
-		return ErrNotReady
+		return stageError("service_inactive")
 	}
 	base := filepath.Join("/proc", strconv.Itoa(pid))
 	executable, err := os.Readlink(filepath.Join(base, "exe"))
 	if err != nil || executable != installation.Binary {
-		return ErrNotReady
+		return stageError("process_executable")
 	}
 	command, err := read(filepath.Join(base, "cmdline"))
 	if err != nil {
-		return ErrNotReady
+		return stageError("process_arguments_read")
 	}
 	found := false
 	for _, arg := range strings.Split(string(command), "\x00") {
@@ -147,11 +116,11 @@ func Check(ctx context.Context, configPaths ...string) error {
 		}
 	}
 	if !found {
-		return ErrNotReady
+		return stageError("process_arguments")
 	}
 	fds, err := os.ReadDir(filepath.Join(base, "fd"))
 	if err != nil {
-		return ErrNotReady
+		return stageError("process_sockets_read")
 	}
 	inodes := map[string]bool{}
 	for _, fd := range fds {
@@ -172,33 +141,33 @@ func Check(ctx context.Context, configPaths ...string) error {
 			}
 		}
 		if !matched {
-			return ErrNotReady
+			return stageError("tproxy_" + network + "_listener")
 		}
 	}
 	endpoint, err := xrayconfig.ExtractLocalAPI(raw)
 	if err != nil {
-		return ErrNotReady
+		return stageError("api_configuration")
 	}
 	api, err := routingservice.NewClient(installation.Binary, endpoint, nil)
 	if err != nil {
-		return ErrNotReady
+		return stageError("api_client")
 	}
 	if _, err = api.ListRules(ctx); err != nil {
-		return ErrNotReady
+		return stageError("api_unavailable")
 	}
 	// Recheck pid and configuration after all observations.
 	again, err := ctl.Run(ctx, []string{"show", "xray.service", "--property=MainPID", "--value"})
 	if err != nil || strings.TrimSpace(string(again.Stdout())) != strconv.Itoa(pid) {
-		return ErrNotReady
+		return stageError("process_changed")
 	}
 	after, err := read(installation.Config)
 	if err != nil || string(after) != string(raw) {
-		return ErrNotReady
+		return stageError("config_changed")
 	}
 	return nil
 }
 
-// checkDeclarations is shared by activation and boot checks without mutating files.
+// checkDeclarations compares declared bindings for explicit diagnostics only.
 func checkDeclarations(ctx context.Context, docs map[string]*nativebinding.Document, raw []byte, configPath string, identity func(context.Context) (int, error)) error {
 	checks, err := nativebinding.CheckDocuments(docs, func(source string) (string, error) {
 		if strings.HasPrefix(source, "helper.network.") {
@@ -215,11 +184,11 @@ func checkDeclarations(ctx context.Context, docs map[string]*nativebinding.Docum
 		return xrayconfig.BindingValue(raw, source)
 	})
 	if err != nil {
-		return ErrNotReady
+		return stageError("binding_consistency")
 	}
 	for _, check := range checks {
 		if check.Status == "mismatch" || check.Status == "unresolved" {
-			return ErrNotReady
+			return stageError("binding_consistency")
 		}
 	}
 	return nil
@@ -257,23 +226,18 @@ func ownsListener(raw []byte, inodes map[string]bool, port int, network string) 
 func boundedRead(file *os.File) ([]byte, error) {
 	raw, err := io.ReadAll(io.LimitReader(file, (16<<20)+1))
 	if err != nil || len(raw) > 16<<20 {
-		return nil, ErrNotReady
+		return nil, stageError("input_read")
 	}
 	return raw, nil
 }
 
-// Wait allows Type=simple services time to create their listeners after start.
+// Wait is retained for command callers. Diagnostics run once and report the
+// observed failure instead of repeatedly validating the entire configuration.
 func Wait(ctx context.Context, configPaths ...string) error {
-	checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	for {
-		if Check(checkCtx, configPaths...) == nil {
-			return nil
-		}
-		select {
-		case <-checkCtx.Done():
-			return ErrNotReady
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
+	return Check(ctx, configPaths...)
+}
+
+// stageError deliberately excludes raw errors, command output and file contents.
+func stageError(stage string) error {
+	return fmt.Errorf("%w: %s", ErrNotReady, stage)
 }
