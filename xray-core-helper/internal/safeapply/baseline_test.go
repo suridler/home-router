@@ -18,8 +18,6 @@ func baselineFixture() []BaselineFile {
 	return []BaselineFile{
 		{TemplateID: templatecatalog.Nftables, Present: true, Content: []byte("# private original\n"), Mode: 0640, UID: 10, GID: 20},
 		{TemplateID: templatecatalog.Sysctl, Content: []byte{}},
-		{TemplateID: templateapply.LifecycleScriptID, Content: []byte{}},
-		{TemplateID: templateapply.LifecycleSysctlID, Content: []byte{}},
 		{TemplateID: templatecatalog.TProxyUnit, Present: true, Content: []byte{}, Mode: 0600},
 		{TemplateID: templateapply.LifecycleDropinID, Content: []byte{}},
 	}

@@ -30,7 +30,6 @@ func ConfigureNetwork(store SetupStore, path string) error {
 
 func (m setupManifest) files() []setupFile {
 	items := append([]setupFile(nil), m.Items...)
-	items = append(items, m.Lifecycle...)
 	if m.Network != nil {
 		items = append(items, *m.Network)
 	}

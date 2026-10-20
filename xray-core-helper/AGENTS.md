@@ -62,6 +62,13 @@ implementation before changing a public contract.
 - Tests must use temporary files, fake command runners and temporary sockets;
   they must not touch host Xray, systemd, `/etc`, `/usr/local`, or runtime DBs.
 
+## Design choices
+
+Follow the workspace simplicity rule: prefer existing reliable native mechanisms.
+New scripts, processes, state, dependencies or checks require a concrete reason
+why the simpler solution does not satisfy the agreed task. Do not introduce them
+solely for hypothetical future cases.
+
 ## Go structure and style
 
 - Keep both commands thin: orchestration belongs in focused `internal`

@@ -43,7 +43,7 @@ templates, confinement, sysctl dry-run и web HTTP. Проверки истор�
 sudo python3 packaging/t8-server-test.py smoke --reviewed-sysctl
 ```
 
-Runner выполняет sysctl apply/confirm и apply/rollback, сохраняет baseline всей группы nftables/sysctl/routing unit и трёх lifecycle assets (script, Xray drop-in, независимая sysctl unit) и метаданные файлов, проверяет сохранность recovery после перезапуска helper. Откат system-файлов требует последующей ручной перезагрузки. PASS на этом этапе означает готовность продолжить процедуру.
+Runner выполняет sysctl apply/confirm и apply/rollback, сохраняет baseline всей группы nftables/sysctl/routing unit и одного вспомогательного Xray drop-in и метаданные файлов, проверяет сохранность recovery после перезапуска helper. Откат system-файлов требует последующей ручной перезагрузки. PASS на этом этапе означает готовность продолжить процедуру.
 
 Сохраните напечатанный audit path; для post-reboot нужен именно audit успешного smoke. Не используйте каталог неуспешного preflight.
 
@@ -104,11 +104,15 @@ sudo jq '{templates: [.body.templates[]? | {templateId, state, summary}]}' \
 4. CLI и browser setup, прямой и настроенный proxy outbound.
 5. Работа data plane при остановленных helper/web, включая холодный boot без
    helper; не путать успех прежнего bundle с приёмкой N9.
-6. Stop/start/restart и crash Xray на disposable host: оба nft jump отключаются
-   до штатной остановки/после сбоя; start возвращает их после policy route/rule.
-   Отказ активации делает Xray failed и очищает частично установленный перехват.
-   Ручной nft reload оставляет перехват выключенным до явного restart routing.
-   Проверить сохранность чужих nft-объектов/маршрутов и повторный off.
+6. Перед переходом явно выполните `sudo systemctl disable xray-tproxy-routing.service`
+   без `--now`: новая unit static, старый независимый autostart не мигрируется.
+   Явный TProxy apply перезапускает Xray; routing запускает его строгий hook.
+   Stop/start/restart и crash Xray на disposable host: routing включается вместе
+   с Xray, отдельного enable нет. После stop/failed start удаляются rule и точный
+   local route; постоянные nft-правила и forwarding сохраняются. Ошибка add route/
+   rule делает Xray failed. Проверить сохранность чужих маршрутов и правил.
+   Прежний локальный beta.4 на `0eb9d59` отозван; новая схема требует новой регрессии
+   и серверной приёмки, прежние PASS к ней не относятся.
 7. Открытие всех разделов панели, stale/conflict/error состояния и отображение recovery.
 8. Внутренний планировщик сбора ошибок и сохранение последних 100 записей после перезапуска/reboot:
    одинаковые сообщения остаются отдельными записями с собственным временем.

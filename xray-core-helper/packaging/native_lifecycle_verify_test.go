@@ -31,18 +31,17 @@ func TestNativeLifecycleOfflineSystemdVerification(t *testing.T) {
 	for _, name := range []string{"systemd-sysctl", "nftables"} {
 		write("etc/systemd/system/"+name+".service", "[Unit]\nDefaultDependencies=no\n[Service]\nType=oneshot\nExecStart=/usr/bin/true\n", 0644)
 	}
-	for _, name := range []string{"usr/bin/true", "usr/sbin/sysctl", "usr/local/libexec/xray-tproxy/network"} {
+	for _, name := range []string{"usr/bin/true", "usr/bin/systemctl", "sbin/ip"} {
 		write(name, "#!/bin/sh\nexit 0\n", 0755)
 	}
 	write("etc/systemd/system/xray.service", "[Service]\nExecStart=/usr/bin/true\n", 0644)
 	write("etc/systemd/system/xray.service.d/50-tproxy.conf", readAsset(t, "systemd", "50-tproxy.conf"), 0644)
-	write("etc/systemd/system/xray-tproxy-sysctl.service", readAsset(t, "systemd", "xray-tproxy-sysctl.service"), 0644)
 	raw, err := os.ReadFile("../templConf/systemd/xray-tproxy-routing.service")
 	if err != nil {
 		t.Fatal(err)
 	}
 	write("etc/systemd/system/xray-tproxy-routing.service", string(raw), 0644)
-	output, err := exec.Command(analyzer, "--root", root, "verify", "--man=no", "xray.service", "xray-tproxy-routing.service", "xray-tproxy-sysctl.service").CombinedOutput()
+	output, err := exec.Command(analyzer, "--root", root, "verify", "--man=no", "xray.service", "xray-tproxy-routing.service").CombinedOutput()
 	if err != nil {
 		t.Fatalf("offline systemd verification: %v\n%s", err, output)
 	}

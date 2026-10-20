@@ -804,11 +804,7 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 func (e *Engine) initialize(ctx context.Context, op *Operation, bundle string) error {
 	var err error
 	h := filepath.Join(bundle, "xray-core-helper")
-	for _, dir := range []string{"/usr/local/libexec/xray-tproxy", "/run/xray-tproxy"} {
-		if err = os.MkdirAll(e.Files.Path(dir), 0755); err != nil {
-			return err
-		}
-	}
+
 	if err = e.command(ctx, "/usr/bin/systemd-sysusers", filepath.Join(h, "packaging/sysusers.d/xray-core-helper.conf")); err != nil {
 		return err
 	}

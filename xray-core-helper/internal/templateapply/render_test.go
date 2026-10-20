@@ -162,7 +162,7 @@ func TestUnitFactoryUsesSavedMarkAndTableWithoutExpandingCommands(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Environment=TPROXY_MARK=2", "Environment=TPROXY_TABLE=321", "ExecStart=/usr/local/libexec/xray-tproxy/network on"} {
+	for _, want := range []string{"Environment=TPROXY_MARK=2", "Environment=TPROXY_TABLE=321", "ExecStart=/sbin/ip route add local default dev lo table ${TPROXY_TABLE}"} {
 		if !strings.Contains(string(got), want) {
 			t.Fatal(want)
 		}

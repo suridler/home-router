@@ -21,10 +21,8 @@ install -o root -g root -m 0644 "$project_dir/templConf/nftables/nftables.conf" 
 install -o root -g root -m 0644 "$project_dir/templConf/systemd/xray-tproxy-routing.service" "$factory_root/systemd/xray-tproxy-routing.service"
 install -o root -g root -m 0644 "$project_dir/templConf/sysctl/99-xray.conf" "$factory_root/sysctl/99-xray.conf"
 
-# Factory sources only: explicit setup/apply installs the self-contained network.
+# Factory source only: explicit TProxy apply installs the Xray drop-in.
 install -d -o root -g root -m 0755 /usr/share/xray-core-helper/native
-install -o root -g root -m 0644 "$project_dir/packaging/xray-tproxy-network.py" /usr/share/xray-core-helper/native/xray-tproxy-network.py
 install -o root -g root -m 0644 "$project_dir/packaging/systemd/50-tproxy.conf" /usr/share/xray-core-helper/native/50-tproxy.conf
-install -o root -g root -m 0644 "$project_dir/packaging/systemd/xray-tproxy-sysctl.service" /usr/share/xray-core-helper/native/xray-tproxy-sysctl.service
 
 systemd-tmpfiles --create "$project_dir/packaging/tmpfiles.d/xray-core-helper.conf"

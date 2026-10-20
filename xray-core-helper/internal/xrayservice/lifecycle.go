@@ -31,15 +31,7 @@ func (r *Resolver) CheckGatewayLifecycle(ctx context.Context) error {
 			if json.Unmarshal(command[1], &argv) != nil {
 				return ErrGatewayLifecycle
 			}
-			if len(argv) == 2 && argv[0] == "/usr/local/libexec/xray-tproxy/network" {
-				if name == "ExecStartPost" && argv[1] == "xray-start" {
-					startRouting = true
-				}
-				if (name == "ExecStop" || name == "ExecStopPost") && argv[1] == "xray-stop" {
-					stopRouting = true
-				}
-				continue
-			}
+
 			if len(argv) == 0 || (argv[0] != "/usr/bin/systemctl" && argv[0] != "/bin/systemctl") {
 				continue
 			}

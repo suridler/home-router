@@ -44,16 +44,22 @@ JSON-запросы имеют ограниченный размер, неизв
 
 ### Управление службами и диагностика
 
-Allowlisted start/restart/enable выполняют соответствующее действие systemd
-без предварительного gateway gate. `enable` разрешён для routing unit и меняет
-только автозапуск, не её текущее состояние. Ошибки native-команд передаются
+Allowlisted start/stop/restart/status выполняют соответствующее действие systemd
+без предварительного gateway gate. Отдельное действие `enable` удалено:
+routing всегда запускается hook службы Xray, собственного автозапуска у него нет. Ошибки native-команд передаются
 через ограниченные ошибки service-control; детали этапа доступны в журнале unit.
 
 Явный CLI `network-check` проверяет service/config/bindings/socket/API один раз,
 возвращая `xray_gateway_not_ready: <stage>` (например, `config_validation`,
 `tproxy_tcp_listener`, `api_unavailable`). Исходный конфиг и вывод Xray не
 попадают в ошибку. Проверки mtime после запуска нет; диагностика не является
-условием старта или enable и не проверяет LAN forwarding.
+условием старта и не проверяет LAN forwarding.
+
+Явный safe-apply TProxy-unit перезапускает Xray после daemon-reload и применения
+sysctl/nft; строгий post-start Xray запускает routing. Это изменение работы сети,
+о котором CLI предупреждает перед активацией. Перед переходом оператор вручную
+отключает прежний независимый autostart routing без её остановки; см.
+[эксплуатацию](../../docs/OPERATIONS.md#переход-с-прежнего-helper-зависимого-профиля).
 
 ### Настройки журналов
 
@@ -274,8 +280,7 @@ Restore имеет отдельную проверку поколения ист
 - `POST /v1/safe-apply/{id}/confirm` — подтвердить конкретную транзакцию.
 - `POST /v1/safe-apply/{id}/rollback` — запросить откат.
 
-Подтверждение требует актуального ID. Для native system rollback восстанавливается группа nftables/sysctl/routing unit и трёх lifecycle assets (script,
-Xray drop-in, sysctl unit), после чего требуется ручная перезагрузка.
+Подтверждение требует актуального ID. Для native system rollback восстанавливается группа nftables/sysctl/routing unit и одного вспомогательного Xray drop-in, после чего требуется ручная перезагрузка.
 Ранее записанная группа из трёх файлов восстанавливается в её прежнем составе. Фаза `awaiting_reboot` сохраняется после перезапуска helper. При неполном восстановлении изменения блокируются; статус и диагностические чтения остаются доступны.
 
 Не удаляйте pending/backup и не исправляйте audit вручную ради прохождения проверки. [Восстановление](../../docs/OPERATIONS.md) и [T8](../packaging/T8_MANUAL_SERVER_TEST.md) описывают действия оператора.

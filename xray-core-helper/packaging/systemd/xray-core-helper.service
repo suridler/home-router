@@ -35,8 +35,5 @@ ReadWritePaths=/var/lib/xray-core-helper-update
 ReadWritePaths=/run/xray-core-helper /var/lib/xray-core-helper /usr/local/etc/xray /usr/local/share/xray /var/log/xray /etc/xray-core-helper /etc/systemd/system /etc/sysctl.d
 
 
-# Only the installed native lifecycle directory, for atomic replacement.
-ReadWritePaths=/usr/local/libexec/xray-tproxy /run/xray-tproxy
-
 [Install]
 WantedBy=multi-user.target

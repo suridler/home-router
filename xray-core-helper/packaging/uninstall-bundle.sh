@@ -13,4 +13,4 @@ for path in /etc/systemd/system/xray-core-helper-routing.service /etc/systemd/sy
 rm -rf -- /opt/xrayui-web
 rm -f -- /usr/local/bin/domain-list-community /usr/local/share/licenses/xray-core-helper/domain-list-community.txt
 systemctl daemon-reload
-echo "Preserved: /etc/xray-core-helper /etc/xrayui-web /var/lib/xray-core-helper and standalone native network assets (Xray drop-in, routing/sysctl units, lifecycle script)"
+echo "Preserved: /etc/xray-core-helper /etc/xrayui-web /var/lib/xray-core-helper and native network files and Xray drop-in"

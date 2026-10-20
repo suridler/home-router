@@ -10,6 +10,3 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-
-# Only the installed native lifecycle directory, for atomic replacement.
-ReadWritePaths=/usr/local/libexec/xray-tproxy /run/xray-tproxy

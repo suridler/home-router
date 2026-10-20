@@ -173,7 +173,7 @@ func runSetupWizard(client *http.Client, stdin io.Reader, out, stderr io.Writer)
 
 // Activation uses the existing durable safe-apply journal and grouped recovery.
 func offerNetworkActivation(client *http.Client, input *bufio.Scanner, out, stderr io.Writer) int {
-	fmt.Fprintln(out, "\nНастройки подготовлены, Xray проверен. Перенаправление трафика пока выключено.\nПри включении проверим доступ в интернет до и после изменения сети.\nДержите открытой независимую консоль. Для завершения отката потребуется ручная перезагрузка.")
+	fmt.Fprintln(out, "\nНастройки подготовлены, Xray проверен. Перенаправление трафика пока выключено.\nПри включении перезапустим Xray и проверим доступ в интернет до и после изменения сети.\nДержите открытой независимую консоль. Для завершения отката потребуется ручная перезагрузка.")
 	answer, ok := choose(input, out, "Включить перенаправление трафика через Xray?", []string{"Да, включить и проверить", "Нет, оставить выключенным"}, 2)
 	if !ok || answer == 2 {
 		fmt.Fprintln(out, "Настройки подготовлены. Перенаправление трафика оставлено выключенным.")
@@ -203,7 +203,7 @@ func offerNetworkActivation(client *http.Client, input *bufio.Scanner, out, stde
 	printNetworkProbe(client, out, api.NetworkProbeRequest{Stage: "after", TransactionID: applied.TransactionID})
 	var choice int
 	for {
-		choice, ok = choose(input, out, "Сохранить настройки и включать TProxy при загрузке?\nВы можете сохранить их и при неуспешной проверке интернета.", []string{"Да, сохранить", "Откатить изменения", "Проверить интернет ещё раз", "Не подтверждать — дождаться отката"}, 4)
+		choice, ok = choose(input, out, "Сохранить настройки? После сохранения TProxy будет запускаться и останавливаться вместе с Xray.\nВы можете сохранить их и при неуспешной проверке интернета.", []string{"Да, сохранить", "Откатить изменения", "Проверить интернет ещё раз", "Не подтверждать — дождаться отката"}, 4)
 		if !ok || choice != 3 {
 			break
 		}
@@ -223,12 +223,8 @@ func offerNetworkActivation(client *http.Client, input *bufio.Scanner, out, stde
 		return 1
 	}
 	if action == "confirm" {
-		var enabled api.ServiceActionResponse
-		if err = requestJSON(client, http.MethodPost, "/v1/xray/services/tproxy/enable", struct{}{}, &enabled); err != nil {
-			writeRequestError(stderr, "TProxy confirmed; boot enable failed", err)
-			return 1
-		}
-		fmt.Fprintln(out, "Настройки сохранены. Перенаправление трафика через Xray включено, автозапуск включён.")
+
+		fmt.Fprintln(out, "Настройки сохранены. Перенаправление трафика включено. TProxy запускается и останавливается вместе с Xray.")
 	}
 	if result.Transaction.RebootRequired {
 		fmt.Fprintln(out, "Файлы восстановлены. Требуется ручная перезагрузка; эффекты работающего ядра не восстановлены.")

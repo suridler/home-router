@@ -34,7 +34,7 @@ func TestLifecycleFilesIncludedInDurableBaseline(t *testing.T) {
 	e := lifecycleFixture(t)
 	ctx := context.Background()
 	baseline, err := e.CaptureSystemBaseline(ctx)
-	if err != nil || len(baseline) != 6 {
+	if err != nil || len(baseline) != 4 {
 		t.Fatalf("capture %d: %v", len(baseline), err)
 	}
 	prepared, err := e.prepareLifecycle()
@@ -70,7 +70,7 @@ func TestLifecycleRejectsDriftBeforeAnyWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := e.lifecycleAssets[2].Target
+	last := e.lifecycleAssets[0].Target
 	if err = os.MkdirAll(filepath.Dir(last), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +80,8 @@ func TestLifecycleRejectsDriftBeforeAnyWrite(t *testing.T) {
 	if err = e.installLifecycle(context.Background(), prepared); err == nil {
 		t.Fatal("drift overwritten")
 	}
-	if _, err = os.Stat(e.lifecycleAssets[0].Target); !os.IsNotExist(err) {
-		t.Fatal("partial write before drift check")
+	if raw, err := os.ReadFile(last); err != nil || string(raw) != "operator change" {
+		t.Fatal("operator edit changed before drift rejection", err, string(raw))
 	}
 }
 
@@ -108,7 +108,7 @@ func TestLifecycleDigestTracksSourceAndInstalledContent(t *testing.T) {
 	if err = e.verifyLifecycle(changed); err == nil {
 		t.Fatal("installed drift invisible")
 	}
-	if _, err = e.catalog.Lookup(LifecycleScriptID); err == nil {
+	if _, err = e.catalog.Lookup(LifecycleDropinID); err == nil {
 		t.Fatal("recovery ID became public")
 	}
 	if _, err = e.groupPath(templatecatalog.XrayConfig); err == nil {

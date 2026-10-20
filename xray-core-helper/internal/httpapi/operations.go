@@ -70,7 +70,7 @@ func registerOperations(
 			}
 			unit, unitOK := serviceUnit(r.PathValue("unit"))
 			action, actionOK := serviceAction(r.PathValue("action"))
-			if !unitOK || !actionOK || action == servicecontrol.ActionEnable && unit != servicecontrol.UnitTProxy {
+			if !unitOK || !actionOK {
 				writeAPIError(w, http.StatusBadRequest, "invalid_service_action", "service unit or action is not allowed")
 				return
 			}
@@ -171,7 +171,7 @@ func serviceUnit(value string) (servicecontrol.Unit, bool) {
 
 func serviceAction(value string) (servicecontrol.Action, bool) {
 	switch servicecontrol.Action(value) {
-	case servicecontrol.ActionEnable, servicecontrol.ActionStart, servicecontrol.ActionStop, servicecontrol.ActionRestart:
+	case servicecontrol.ActionStart, servicecontrol.ActionStop, servicecontrol.ActionRestart:
 		return servicecontrol.Action(value), true
 	default:
 		return "", false

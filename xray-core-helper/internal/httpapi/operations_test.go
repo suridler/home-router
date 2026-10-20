@@ -130,7 +130,6 @@ func TestServiceHTTPMapsOnlyAllowlistedUnitsAndActions(t *testing.T) {
 		{path: "/v1/xray/services/xray/start", unit: servicecontrol.UnitXray, action: servicecontrol.ActionStart},
 		{path: "/v1/xray/services/xray/stop", unit: servicecontrol.UnitXray, action: servicecontrol.ActionStop},
 		{path: "/v1/xray/services/xray/restart", unit: servicecontrol.UnitXray, action: servicecontrol.ActionRestart},
-		{path: "/v1/xray/services/tproxy/enable", unit: servicecontrol.UnitTProxy, action: servicecontrol.ActionEnable},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -286,6 +285,9 @@ func assertAPIError(t *testing.T, response *httptest.ResponseRecorder, status in
 
 func TestTProxyActivationRequiresDurableSafeApply(t *testing.T) {
 	services := &serviceFake{}
+	response := httptest.NewRecorder()
+	operationsServer(ServerServices{Services: services}).Handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/xray/services/tproxy/enable", nil))
+	assertAPIError(t, response, 400, "invalid_service_action")
 	for _, action := range []string{"start", "restart"} {
 		response := httptest.NewRecorder()
 		operationsServer(ServerServices{Services: services}).Handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/xray/services/tproxy/"+action, nil))

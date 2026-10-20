@@ -1,21 +1,21 @@
 [Unit]
-Description=Xray TProxy interception and policy routing
-# A boot request cannot intercept before Xray reaches its post-start hook.
-ConditionPathExists=/run/xray-tproxy/started
+Description=Xray TProxy policy routing (fail-open)
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=180
-TimeoutStopSec=180
 
 # helper:v1 bind rulemark type=uint32 source=helper.network.intercept-mark
 Environment=TPROXY_MARK=${intercept_mark}
 # helper:v1 bind policytable type=uint32 source=helper.network.policy-table
 Environment=TPROXY_TABLE=${policy_table}
 
-ExecStart=/usr/local/libexec/xray-tproxy/network on
-ExecStopPost=/usr/local/libexec/xray-tproxy/network off
+# Remove only this profile's rule and local route before every start.
+ExecStartPre=-/sbin/ip rule del fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
+ExecStartPre=-/sbin/ip route del local default dev lo table ${TPROXY_TABLE}
+ExecStart=/sbin/ip route add local default dev lo table ${TPROXY_TABLE}
+ExecStart=/sbin/ip rule add fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
 
-[Install]
-WantedBy=multi-user.target
+# ExecStopPost also runs after a failed start. Return to main routing first.
+ExecStopPost=-/sbin/ip rule del fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}
+ExecStopPost=-/sbin/ip route del local default dev lo table ${TPROXY_TABLE}

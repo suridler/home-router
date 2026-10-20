@@ -16,6 +16,17 @@
 - Distinguish this development host from a remote test server. Verify paths,
   installed versions, interfaces and service state on the host being tested.
 
+## Design choices
+
+- Prefer the simplest reliable solution that satisfies the agreed requirements.
+  Evaluate existing native mechanisms before adding custom orchestration.
+- Justify every increase in complexity with a concrete requirement or observed
+  failure: state what the simpler alternative cannot do and why the added
+  dependencies, state, checks or recovery logic are necessary. Speculative
+  flexibility and hypothetical edge cases are not sufficient justification.
+- Discuss architectural tradeoffs with the user before implementing materially
+  more complex behavior. Remove complexity when its justification no longer applies.
+
 ## Component ownership
 
 - `xray-core-helper`: privileged API, Xray configuration transactions, native

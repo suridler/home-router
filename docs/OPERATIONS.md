@@ -34,67 +34,69 @@ root:xray-core-helper 0660; доступ только доверенным beta-
 
 ## Независимый жизненный цикл TProxy
 
-После явной подготовки сети основной Xray unit остаётся штатным; hooks находятся
-в `/etc/systemd/system/xray.service.d/50-tproxy.conf`. Перехват и policy routing
-включаются после запуска Xray, выключаются перед его остановкой и после сбоя.
-Неуспешная активация TProxy делает запуск Xray неуспешным. Helper в этом пути
-не вызывается; его остановка, обновление или удаление не отключает native-сеть.
-Установленные script/drop-in/sysctl unit сохраняются при удалении helper.
+Настроенная native-сеть запускается без helper. Постоянный nft-профиль содержит
+обычные правила TProxy; systemd запускает nftables и systemd-sysctl до Xray.
+Drop-in `/etc/systemd/system/xray.service.d/50-tproxy.conf` всегда запускает
+routing unit после старта Xray и останавливает её перед стартом, при остановке
+и после сбоя. Ошибка активации routing означает неуспешный запуск Xray.
+Основной unit Xray не заменяется. Отдельного enable routing unit нет.
+`Wants`/`After` задают запуск и порядок nftables/sysctl, но не распространяют
+их отказ на Xray; строгий post-start контролирует установку policy routing.
 
-Диагностика без изменения сети:
+Routing добавляет local route, затем fwmark rule; очистка удаляет rule, затем
+точный local route. Постоянные nft-правила, forwarding и sysctl при stop остаются.
+Отдельных Python lifecycle/marker/lock нет. Обновление или удаление helper
+сохраняет установленный drop-in и native-файлы.
+
+Read-only диагностика:
 
 ```bash
 systemctl show --no-pager xray.service xray-tproxy-routing.service \
   -p Id -p ActiveState -p SubState -p Result
 sudo journalctl -b -u xray.service -u xray-tproxy-routing.service \
-  -u xray-tproxy-sysctl.service -n 80 --no-pager
+  -u nftables.service -u systemd-sysctl.service -n 80 --no-pager
 sudo /usr/local/bin/xray-core-helper network-check
-sudo /usr/sbin/nft list chain inet xray prerouting
-sudo /usr/sbin/nft list chain inet xray output
+sudo /usr/sbin/nft list table inet xray
 ip -4 rule show
 # Таблица 100 — default; подставьте своё значение из routing unit:
 ip -4 route show table 100
 ```
 
-`network-check` выполняет одну диагностику, возвращает конкретный безопасный
-этап ошибки и не включает правила. API/socket/mtime не блокируют запуск Xray.
-Успешная диагностика и наличие marker не доказывают прохождение LAN-трафика.
+`network-check` выполняет одну диагностику с безопасным кодом этапа ошибки,
+не включает правила и не является условием запуска Xray. Проверки API/socket/mtime
+не блокируют boot. Успех диагностики не доказывает LAN forwarding.
 
-При ручной загрузке `/etc/nftables.conf` обе входные цепочки пусты: перехват
-выключен, даже если routing unit ещё показывает active. Для явного повторного
-включения при работающем Xray:
-
-```bash
-# Меняет маршрутизацию; сначала проверьте Xray и сохраните независимую консоль.
-sudo systemctl restart xray-tproxy-routing.service
-```
-
-`enable` только задаёт автозапуск; немедленного включения не выполняет.
-`disable` также не останавливает уже активную unit. Отсутствие Xray marker
-не позволяет вручную включить перехват до post-start Xray. Не создавайте marker
-вручную. Во время остановки Xray текущие проксируемые соединения обрываются;
-обычный routing не гарантирует DNS, если единственный DNS обслуживает Xray.
+Fail-open означает снятие policy rule/route; nft-перехват остаётся. Это не
+гарантия работы всей сети без Xray. Текущие проксируемые соединения при stop
+обрываются; DNS зависит от схемы сервера.
 
 ### Переход с прежнего helper-зависимого профиля
 
-Обновление бинарников само по себе сеть не переводит на N9. До перехода
-сохраните независимую консоль и результаты диагностики, проверьте рабочие
-шаблоны и реальные параметры; установка не синхронизирует их молча.
+Обновление бинарников не переводит сеть автоматически. На тестовом сервере
+с независимой консолью проверьте рабочие шаблоны и параметры. До перевода явно
+отключите прежний независимый автозапуск routing, сохранив её текущее состояние:
 
-На тестовом сервере явно выберите новый nft-профиль с пустыми входными
-цепочками и новый routing template. Сначала примените/подтвердите sysctl
-при необходимости, затем nftables (перехват пока выключен), затем TProxy-unit.
-Последняя операция сохраняет группу из шести файлов, останавливает старую
-routing unit с прежними параметрами, устанавливает самостоятельный адаптер,
-Xray drop-in и sysctl unit, выполняет daemon-reload и включает новый профиль.
-Конфиг Xray и рабочий Xray-шаблон этой операцией не заменяются.
+```bash
+sudo systemctl disable xray-tproxy-routing.service
+```
+
+Не добавляйте `--now`: остановка активной сети здесь не требуется. Новый unit
+будет static, запускаемый только hooks Xray. Установщик не мигрирует symlinks
+автоматически.
+
+Setup готовит native-файлы; явный safe-apply TProxy-unit устанавливает единственный Xray
+drop-in, перечитывает systemd и применяет routing. До замены старую routing
+службу останавливают с прежними параметрами. После daemon-reload sysctl
+применяется через helper oneshot, управляемый блок `/etc/nftables.conf` — native
+adapter, затем перезапускается Xray. Его строгий post-start запускает routing;
+CLI до активации предупреждает о перезапуске Xray.
+В boot вместо helper работают штатные nftables/systemd-sysctl. Конфиг Xray
+и рабочий Xray-шаблон молча не заменяются.
 
 Проверьте серверный доступ и LAN до подтверждения. При сбое используйте
-штатный grouped rollback и отдельную ручную перезагрузку; не удаляйте evidence
-и не объявляйте восстановление файлов восстановлением текущего runtime.
-После успешного подтверждения проверьте автозапуск routing unit и выполните
-матрицу N9 из [TESTING](TESTING.md), включая загрузку без helper. Рабочий сервер
-переводится только после успешной проверки этого комплекта на тестовом.
+штатный grouped rollback четырёх файлов и отдельный ручной reboot; не удаляйте
+evidence. Затем выполните новую матрицу N9 из [TESTING](TESTING.md).
+Рабочий сервер переводится отдельным действием после тестовой приёмки.
 
 ## Шаблоны и drift
 
@@ -132,8 +134,7 @@ sudo /usr/local/bin/xray-core-helper safe-apply rollback TRANSACTION_ID
 ```
 
 Timeout запускает systemd rollback timer. Системный rollback восстанавливает
-baseline всей native-группы: nft/sysctl/routing unit, lifecycle script,
-Xray drop-in и независимая sysctl unit. Runtime может оставаться изменённым
+baseline всей native-группы: nft/sysctl/routing unit и Xray drop-in. Runtime может оставаться изменённым
 до reboot; исторические трёхфайловые операции восстанавливаются в прежнем составе.
 
 - Неполный restore/recoveryRequired: сначала устраните причину и повторите

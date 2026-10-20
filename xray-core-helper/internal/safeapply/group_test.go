@@ -85,7 +85,7 @@ func TestGroupRestoreFailureMatrixAndNewBoot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if files, err := s.store.Baseline(ctx, operation.ID); err != nil || len(files) != 6 {
+			if files, err := s.store.Baseline(ctx, operation.ID); err != nil || len(files) != 4 {
 				t.Fatal("activation without complete manifest", err)
 			}
 			g.failRestore = failed

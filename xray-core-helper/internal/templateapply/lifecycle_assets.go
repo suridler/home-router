@@ -13,9 +13,7 @@ import (
 
 // These identifiers are recovery evidence only; they are not catalog/API IDs.
 const (
-	LifecycleScriptID templatecatalog.ID = "tproxy-network-script"
 	LifecycleDropinID templatecatalog.ID = "tproxy-xray-dropin"
-	LifecycleSysctlID templatecatalog.ID = "tproxy-sysctl-unit"
 )
 
 type LifecycleAsset struct {
@@ -29,14 +27,12 @@ type LifecycleAsset struct {
 // an API caller. Bundle upgrades replace the sources, not these destinations.
 func DefaultLifecycleAssets() []LifecycleAsset {
 	return []LifecycleAsset{
-		{LifecycleScriptID, "/usr/share/xray-core-helper/native/xray-tproxy-network.py", "/usr/local/libexec/xray-tproxy/network", 0755, 0, 0},
 		{LifecycleDropinID, "/usr/share/xray-core-helper/native/50-tproxy.conf", "/etc/systemd/system/xray.service.d/50-tproxy.conf", 0644, 0, 0},
-		{LifecycleSysctlID, "/usr/share/xray-core-helper/native/xray-tproxy-sysctl.service", "/etc/systemd/system/xray-tproxy-sysctl.service", 0644, 0, 0},
 	}
 }
 
 func LifecycleMember(id templatecatalog.ID) bool {
-	return id == LifecycleScriptID || id == LifecycleDropinID || id == LifecycleSysctlID
+	return id == LifecycleDropinID
 }
 
 func (engine *Engine) lifecycleInventory() []LifecycleAsset {

@@ -481,7 +481,6 @@ document.addEventListener('alpine:init', () => {
     async runAction(action) {
       if (!this.canMutate()) return;
       if (action === 'network-start' || action === 'network-restart') return this.activateNetwork();
-      if (action === 'network-enable' && !window.confirm('Включить запуск TProxy при загрузке? При запуске будет проверяться готовность Xray.')) return;
       this.pendingAction = action; this.actionMessage = '';
       try { await this.api(action.startsWith('network-') ? `/api/network/${action.replace('network-', '')}` : `/api/xray/${action}`, { method: 'POST' }); await this.loadStatus(); this.actionMessage = 'Команда выполнена; состояние обновлено.'; }
       catch (error) { this.actionMessage = error.message; }

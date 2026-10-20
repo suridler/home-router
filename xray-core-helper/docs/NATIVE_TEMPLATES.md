@@ -297,23 +297,19 @@ finish bookkeeping; boot-ID change is not itself proof of healthy forwarding.
 If a crash interrupts file restoration, restore it first and conservatively
 require a subsequent reboot rather than assume this boot loaded the old file.
 
-The system recovery group has six durable members: nftables, sysctl, the
-routing unit, `/usr/local/libexec/xray-tproxy/network`,
-`/etc/systemd/system/xray.service.d/50-tproxy.conf`, and
-`/etc/systemd/system/xray-tproxy-sysctl.service`. Capture every member (including
-original absence and metadata) before the first mutation, even when applying
-one selected template. Keep per-template apply/confirmation choices but one
-recovery operation; never combine baselines from different operations. Historical
-three-member evidence remains recoverable in its original scope; new captures
-include all six. Xray structured configuration is outside this recovery group.
+The system recovery group has four durable members: nftables, sysctl, the
+routing unit and `/etc/systemd/system/xray.service.d/50-tproxy.conf`. Capture
+all members, including original absence and metadata, before the first mutation,
+even when applying one selected template. Historical three-member evidence
+remains recoverable in its original scope. Xray structured configuration is
+outside this group.
 
-Explicit TProxy-unit apply prepares the three auxiliary files from fixed
-`/usr/share/xray-core-helper/native` sources. Source bytes participate in the
-candidate revision, and existing destinations are checked for drift before
-replacement. Setup network preparation uses the same fixed inventory. These
-assets are not new public template IDs, and their paths are never request inputs.
-Bundle install/update refreshes factory sources without replacing the active
-native lifecycle. Helper uninstall preserves the installed native files.
+Explicit safe-apply of TProxy-unit installs the single auxiliary drop-in from
+its fixed factory source. Its bytes participate in the candidate revision and
+destinations are checked for drift. Setup prepares native files but does not
+install lifecycle hooks implicitly. Bundle install/update refreshes the factory
+source without replacing the active drop-in; uninstall preserves native files.
+The auxiliary asset is not a public template ID or a request-supplied path.
 
 On timeout, explicit rollback or interrupted unconfirmed apply, restore every
 group member to that operation's baseline, then enter one awaiting_reboot state.
@@ -348,37 +344,38 @@ or a returned HTTP response cannot mark incomplete recovery as confirmed.
 
 ## 5. Independent shipped-profile lifecycle
 
-The shipped nft profile persists empty hooked `prerouting`/`output` chains;
-processing lives in `prerouting_proxy`/`output_proxy`. The standalone fixed-purpose
-Python adapter `/usr/local/libexec/xray-tproxy/network` reads the numeric
-`TPROXY_MARK`/`TPROXY_TABLE` Environment of the effective routing unit. It does not
-read helper settings, SQLite, working templates or sockets and does not call
-helper/API. This adapter supports this specific profile; the generic template
-engine does not infer these chains from arbitrary native configurations.
+The shipped nft profile has ordinary persistent TProxy/OUTPUT marking rules,
+as before migration. It has no separately activated entry chains. Native systemd
+loads nftables and sysctl using Wants/After in `50-tproxy.conf` before Xray.
+The drop-in always synchronously starts routing in strict Xray ExecStartPost,
+and stops routing in ExecStartPre, ExecStop and ExecStopPost. Routing has no
+reciprocal Xray ordering or [Install], and no separate enable action exists.
+Failure to activate routing makes Xray startup fail.
 
-`50-tproxy.conf` calls `xray-stop` before Xray start, during stop and after exit,
-and `xray-start` in post-start. Post-start creates `/run/xray-tproxy.started`, then
-restarts the routing unit only when enabled. Failure propagates to Xray start.
-The routing unit has `ConditionPathExists` on that marker and no reciprocal
-Xray ordering. An early multi-user.target job cannot enable interception.
+Routing uses native ip commands only: add the local route, then fwmark rule.
+ExecStopPost deletes the rule, then the exact local route, including after a
+partial failed start. It does not flush the routing table or unrelated rules.
+No standalone Python, marker/lock, adopt/resume, helper config/DB/API or CLI
+participates in startup. Persistent nft rules and forwarding/sysctl stay intact
+when Xray stops; removing the policy rule restores ordinary main routing for
+marked local traffic. This limited fail-open removes policy routing, not nft
+interception, and does not guarantee every network function without Xray.
+Existing proxied connections are not preserved; DNS depends on the deployment.
 
-On activation, the adapter validates the marked native block, applies sysctl
-through independent `xray-tproxy-sysctl.service`, loads the disabled profile,
-adds the exact local route and fwmark rule, then enables both jumps in one nft
-transaction. On disable it flushes only the two owned entry chains together,
-then removes matching policy rules and the matching local route. Other nft
-objects, forwarding and sysctl remain in place; repeated disable is supported.
-Failure after partial activation attempts the same cleanup and reports command
-step failures without copying secret-bearing native output. No transaction spans
-nftables and routing, and existing proxied connections cannot survive Xray exit.
-
-Loading the persistent nft file manually deliberately leaves interception off;
-explicit routing-unit restart is needed with Xray running. No automatic healer
-is installed. `enable` changes boot enablement only. CLI `network-check` is a
-single explicit diagnostic, not a boot/action gate; API/socket checks belong
-there, and config mtime is not used as proof of loaded config. Existing external
-owner/group/mode never determine readiness or trigger permission repairs; actual
-access errors and native syntax/declared binding validation remain meaningful.
+Explicit TProxy apply stops the old routing unit before replacement, installs
+the drop-in, reloads systemd, applies sysctl through the helper oneshot, loads
+the managed `/etc/nftables.conf` block with the fixed native adapter, and restarts
+Xray. Its strict post-start starts routing; there is no separate is-active check
+followed by independently restarting routing. Before transition the operator
+explicitly disables old routing autostart with
+`systemctl disable xray-tproxy-routing.service` (without `--now`). The new unit is static;
+installation does not silently migrate old enablement symlinks. These helper
+operations are not boot prerequisites. Syntax/binding validation and durable grouped restore followed
+by manual reboot remain the apply/recovery contract. CLI
+`network-check` is a single explicit diagnostic, never a boot/action prerequisite.
+Existing external owner/group/mode is not a readiness criterion and is not
+silently repaired; actual access errors and invalid configuration still fail.
+New local regression and server boot/LAN acceptance must be recorded separately.
 
 ## 6. Status and implementation gates
 

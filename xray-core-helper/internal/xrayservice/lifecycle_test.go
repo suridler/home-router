@@ -13,12 +13,8 @@ func TestGatewayLifecycleChecksConflictingOrderingNotHooksAlone(t *testing.T) {
 		name, hook, action      string
 		routingAfter, xrayAfter []string
 		async, wantConflict     bool
-		adapter                 bool
 	}{
 		{name: "no hooks"},
-		{name: "adapter start", hook: "ExecStartPost", action: "xray-start", adapter: true},
-		{name: "adapter start cycle", hook: "ExecStartPost", action: "xray-start", adapter: true, routingAfter: []string{"xray.service"}, wantConflict: true},
-		{name: "adapter stop cycle", hook: "ExecStop", action: "xray-stop", adapter: true, xrayAfter: []string{"xray-tproxy-routing.service"}, wantConflict: true},
 		{name: "native start", hook: "ExecStartPost", action: "start"},
 		{name: "native stop", hook: "ExecStopPost", action: "stop"},
 		{name: "pre-start cleanup", hook: "ExecStartPre", action: "stop", routingAfter: []string{"xray.service"}},
@@ -46,9 +42,6 @@ func TestGatewayLifecycleChecksConflictingOrderingNotHooksAlone(t *testing.T) {
 				commands := [][]any{}
 				if args[len(args)-1] == tc.hook {
 					argv := []string{"/usr/bin/systemctl", tc.action, "xray-tproxy-routing.service"}
-					if tc.adapter {
-						argv = []string{"/usr/local/libexec/xray-tproxy/network", tc.action}
-					}
 					if tc.async {
 						argv = append(argv, "--no-block")
 					}

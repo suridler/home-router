@@ -1,7 +1,6 @@
 package templateapply
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -17,7 +16,6 @@ import (
 const (
 	systemctlBinary = "/usr/bin/systemctl"
 	nftBinary       = "/usr/sbin/nft"
-	networkBinary   = "/usr/local/libexec/xray-tproxy/network"
 	runtimeTimeout  = 2 * time.Minute
 )
 
@@ -30,8 +28,8 @@ type boundedRuntimeRunner struct {
 }
 
 func newBoundedRuntimeRunner() (*boundedRuntimeRunner, error) {
-	result := &boundedRuntimeRunner{runners: make(map[string]*commandrunner.Runner, 3)}
-	for _, executable := range []string{systemctlBinary, nftBinary, networkBinary} {
+	result := &boundedRuntimeRunner{runners: make(map[string]*commandrunner.Runner, 2)}
+	for _, executable := range []string{systemctlBinary, nftBinary} {
 		runner, err := commandrunner.New(executable, runtimeTimeout)
 		if err != nil {
 			return nil, err
@@ -58,9 +56,9 @@ func (runner *boundedRuntimeRunner) Run(ctx context.Context, executable string, 
 }
 
 type CommandRuntime struct {
-	runner           Runner
-	verifyAPI        func(context.Context, string) error
-	networkInstalled func() (bool, error) // hermetic filesystem substitution
+	systemNftPath string // test-only path substitution
+	runner        Runner
+	verifyAPI     func(context.Context, string) error
 }
 
 func NewCommandRuntime() (*CommandRuntime, error) {
@@ -85,7 +83,7 @@ func (runtime *CommandRuntime) Prepare(ctx context.Context, id templatecatalog.I
 	if runtime == nil || runtime.runner == nil {
 		return nil, &Error{Code: CodeRuntime}
 	}
-	transaction := &commandRuntimeTransaction{id: id, runner: runtime.runner, verifyAPI: runtime.verifyAPI, networkInstalled: runtime.networkInstalled}
+	transaction := &commandRuntimeTransaction{id: id, runner: runtime.runner, verifyAPI: runtime.verifyAPI, systemNftPath: runtime.systemNftPath}
 	switch id {
 	case templatecatalog.XrayConfig, templatecatalog.TProxyUnit:
 		unit := unitFor(id)
@@ -100,12 +98,12 @@ func (runtime *CommandRuntime) Prepare(ctx context.Context, id templatecatalog.I
 }
 
 type commandRuntimeTransaction struct {
-	id               templatecatalog.ID
-	runner           Runner
-	wasActive        bool
-	path             string
-	verifyAPI        func(context.Context, string) error
-	networkInstalled func() (bool, error)
+	systemNftPath string
+	id            templatecatalog.ID
+	runner        Runner
+	wasActive     bool
+	path          string
+	verifyAPI     func(context.Context, string) error
 }
 
 // BeforeReplace stops the old unit while systemd still has its old mark/table
@@ -129,10 +127,17 @@ func (transaction *commandRuntimeTransaction) Apply(ctx context.Context, path st
 		if err := transaction.run(ctx, systemctlBinary, "daemon-reload"); err != nil {
 			return err
 		}
-		if err := transaction.run(ctx, networkBinary, "adopt"); err != nil {
+		if err := transaction.run(ctx, systemctlBinary, "start", "xray-core-helper-sysctl.service"); err != nil {
 			return err
 		}
-		return transaction.run(ctx, systemctlBinary, "restart", "xray-tproxy-routing.service")
+		nftPath := transaction.systemNftPath
+		if nftPath == "" {
+			nftPath = "/etc/nftables.conf"
+		}
+		if err := transaction.applyNft(ctx, nftPath); err != nil {
+			return err
+		}
+		return transaction.run(ctx, systemctlBinary, "restart", "xray.service")
 	case templatecatalog.Sysctl:
 		return transaction.run(ctx, systemctlBinary, "start", "xray-core-helper-sysctl.service")
 	default:
@@ -240,30 +245,7 @@ func (transaction *commandRuntimeTransaction) applyNft(ctx context.Context, path
 	if err = transaction.run(ctx, nftBinary, "--file", batch.Name()); err != nil {
 		return err
 	}
-	// The shipped profile explicitly opts into its fixed native lifecycle.
-	// Resume only the already-loaded candidate: restarting the unit here would
-	// re-read the OLD durable file before the safe-apply confirmation.
-	if bytes.Contains(raw, []byte("\n# xray-tproxy:lifecycle v1\n")) {
-		installed := transaction.networkInstalled
-		if installed == nil {
-			installed = func() (bool, error) {
-				_, err := os.Stat(networkBinary)
-				if os.IsNotExist(err) {
-					return false, nil
-				}
-				return err == nil, err
-			}
-		}
-		present, err := installed()
-		if err != nil {
-			return err
-		}
-		// First native adoption loads the off profile before installing lifecycle.
-		if !present {
-			return nil
-		}
-		return transaction.run(ctx, networkBinary, "resume")
-	}
+
 	return nil
 }
 

@@ -143,7 +143,7 @@ func (engine *Engine) RestoreSystemFile(ctx context.Context, file BaselineFile) 
 func (engine *Engine) VerifySystemBaseline(ctx context.Context, files []BaselineFile) error {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	if len(files) != 3 && len(files) != 6 {
+	if len(files) != 3 && len(files) != 4 {
 		return &Error{Code: CodeRollback}
 	}
 	seen := map[templatecatalog.ID]bool{}
@@ -151,7 +151,7 @@ func (engine *Engine) VerifySystemBaseline(ctx context.Context, files []Baseline
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if seen[expected.TemplateID] || (!systemMember(expected.TemplateID) && (len(files) != 6 || !LifecycleMember(expected.TemplateID))) {
+		if seen[expected.TemplateID] || (!systemMember(expected.TemplateID) && (len(files) != 4 || !LifecycleMember(expected.TemplateID))) {
 			return &Error{Code: CodeRollback}
 		}
 		seen[expected.TemplateID] = true

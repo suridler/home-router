@@ -26,7 +26,6 @@ const (
 type Action string
 
 const (
-	ActionEnable  Action = "enable"
 	ActionStatus  Action = "status"
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
@@ -133,7 +132,7 @@ func (service *Service) Execute(ctx context.Context, unit Unit, action Action) (
 	if !validUnit(unit) {
 		return Result{}, &Error{Code: ErrorInvalidUnit}
 	}
-	if !validAction(action) || action == ActionEnable && unit != UnitTProxy {
+	if !validAction(action) {
 		return Result{}, &Error{Code: ErrorInvalidAction}
 	}
 	if service == nil || service.runner == nil || ctx == nil {
@@ -173,7 +172,7 @@ func validUnit(unit Unit) bool {
 
 func validAction(action Action) bool {
 	switch action {
-	case ActionEnable, ActionStatus, ActionStart, ActionStop, ActionRestart:
+	case ActionStatus, ActionStart, ActionStop, ActionRestart:
 		return true
 	default:
 		return false

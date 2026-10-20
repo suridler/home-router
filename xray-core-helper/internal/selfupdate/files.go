@@ -355,11 +355,9 @@ func Targets(bundle string, web bool) []Target {
 	}
 	// Releases predating native lifecycle have none of these factory sources.
 	// They remain installable; active native files are never downgrade targets.
-	// A partial group remains in the inventory so preparation rejects it.
+	// An existing source remains in the inventory so preparation validates it.
 	native := []Target{
-		{"/usr/share/xray-core-helper/native/xray-tproxy-network.py", filepath.Join(h, "packaging/xray-tproxy-network.py"), 0644},
 		{"/usr/share/xray-core-helper/native/50-tproxy.conf", filepath.Join(h, "packaging/systemd/50-tproxy.conf"), 0644},
-		{"/usr/share/xray-core-helper/native/xray-tproxy-sysctl.service", filepath.Join(h, "packaging/systemd/xray-tproxy-sysctl.service"), 0644},
 	}
 	for _, target := range native {
 		if _, err := os.Lstat(target.Source); !os.IsNotExist(err) {

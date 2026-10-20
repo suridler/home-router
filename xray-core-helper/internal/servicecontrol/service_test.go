@@ -216,7 +216,7 @@ func TestExecuteReturnsTypedBoundedCommandFailures(t *testing.T) {
 }
 
 func TestRoutingActionsDoNotRequireGatewayDiagnostics(t *testing.T) {
-	for _, action := range []Action{ActionStart, ActionRestart, ActionEnable} {
+	for _, action := range []Action{ActionStart, ActionRestart} {
 		t.Run(string(action), func(t *testing.T) {
 			runner := &runnerFake{}
 			service := &Service{runner: runner}
@@ -229,7 +229,7 @@ func TestRoutingActionsDoNotRequireGatewayDiagnostics(t *testing.T) {
 		})
 	}
 	service := &Service{runner: &runnerFake{}}
-	if _, err := service.Execute(context.Background(), UnitXray, ActionEnable); err == nil {
+	if _, err := service.Execute(context.Background(), UnitTProxy, Action("enable")); err == nil {
 		t.Fatal("enabled arbitrary unit")
 	}
 }

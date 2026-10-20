@@ -94,44 +94,39 @@ operation, привязанной к config target. Существующий Xra
 `255`, policy table `100`. Общий движок Helper не навязывает числа, имена
 таблиц/цепочек или обязательные sysctl keys: семантика принадлежит шаблону.
 
-Перехват управляется жизненным циклом Xray через отдельный
+Постоянный nft-профиль содержит обычные правила TProxy и OUTPUT marking.
+Lifecycle не переключает цепочки nftables: направление маркированных пакетов
+в локальный Xray включается policy routing. Штатные nftables и systemd-sysctl
+загружаются через `Wants`/`After` в отдельном
 `/etc/systemd/system/xray.service.d/50-tproxy.conf`; основной unit Xray не меняется.
-Hooks вызывают самостоятельный `/usr/local/libexec/xray-tproxy/network`, которому
-не нужны helper, его TOML/SQLite/socket/API. Перед запуском, до штатной остановки
-и после остановки/ошибки Xray выполняется повторяемое отключение. Post-start
-создаёт `/run/xray-tproxy/started` и запускает routing unit только при включённом
-автозапуске этой unit. Ошибка активации делает запуск Xray неуспешным.
 
-Постоянный nft-профиль содержит пустые hooked-цепочки `prerouting`/`output`;
-обработка находится в `prerouting_proxy`/`output_proxy`. Включение применяет
-sysctl через независимую `xray-tproxy-sysctl.service`, загружает профиль,
-устанавливает точные policy route/rule и последней nft-транзакцией добавляет
-оба jump. Отключение сначала очищает обе входные цепочки одной транзакцией,
-затем удаляет соответствующие policy rule и local route; forwarding и чужие
-правила сохраняются. Между nftables и policy routing общей транзакции нет.
-Routing unit проверяет только наличие lifecycle marker, не API/сокеты/mtime.
-У неё нет встречных `After`/`BindsTo`/`PartOf` к Xray; marker не позволяет
-запросу multi-user.target включить перехват до post-start Xray.
+Строгий `ExecStartPost` Xray всегда запускает `xray-tproxy-routing.service`.
+Она добавляет local route, затем fwmark rule. Перед стартом Xray, при штатной
+остановке и после завершения hooks останавливают routing unit. Её `ExecStopPost`
+удаляет rule, затем точный local route, в том числе после failed start.
+Встречных `After`/`BindsTo` к Xray и собственного `[Install]` у routing нет;
+отдельного enable нет. Ошибка активации делает запуск Xray неуспешным.
 
-Фиксированные lifecycle-файлы устанавливаются при явной подготовке сети или
-apply TProxy-unit. Обновление комплекта меняет их factory-источники в
-`/usr/share/xray-core-helper/native`, но не действующие файлы. Удаление helper
-сохраняет установленную native-сеть. Ручной reload `/etc/nftables.conf` оставляет
-перехват выключенным; его повторное включение требует явного restart routing
-unit при работающем Xray. Автоматического восстановления после такого reload нет.
-При safe-apply nftables метка профиля `# xray-tproxy:lifecycle v1` разрешает
-фиксированному адаптеру вернуть оба jump в уже загруженный кандидат, если Xray
-и routing lifecycle включены. Старый постоянный файл до подтверждения не читается. При первом переходе,
-когда самостоятельный адаптер ещё не установлен, загружается только off-профиль.
-Затем явный apply routing unit устанавливает lifecycle и включает перехват.
-Перед заменой routing unit старая служба останавливается с прежними mark/table.
-Явный apply routing unit подключает hooks к работающему Xray без его перезапуска;
-проверка активности и создание marker сериализованы с его остановкой.
-Marker и lock находятся в `/run/xray-tproxy`; этот каталог не удаляется при
-остановке helper. Его отдельный writable mount нужен только для явного apply.
+В boot-пути используются только systemd и native ip-команды. Нет Python
+lifecycle, marker/lock, adopt/resume, вызовов helper/TOML/SQLite/socket/API.
+Forwarding, sysctl, постоянные nft-правила и чужие маршруты при остановке Xray
+не меняются. Снятие policy rule возвращает маркированный OUTPUT в main routing.
+Здесь fail-open означает снятие policy route/rule, а не удаление nft-перехвата
+или гарантию работы всей сети без Xray; текущие соединения и DNS зависят от
+фактической конфигурации.
+
+Setup готовит native-файлы. Единственный вспомогательный asset, Xray drop-in,
+устанавливается при явном safe-apply TProxy-unit; обновление factory-источника
+не подменяет действующий drop-in. Удаление helper сохраняет native-сеть.
+Перед заменой routing unit старая служба останавливается с прежними параметрами.
+Явный apply после установки drop-in выполняет daemon-reload, применяет sysctl
+через helper oneshot, загружает управляемый nft-блок native adapter и перезапускает
+Xray. Его строгий post-start запускает routing. Отдельной проверки is-active
+с последующим независимым запуском routing нет. Эти операции helper не входят
+в boot path. Привилегированная приёмка новой схемы на сервере остаётся отдельным этапом.
 
 Явный `network-check` — однократная диагностика service/config/bindings/socket/API
-с безопасным кодом этапа ошибки. Он не участвует в запуске/enable служб и не
+с безопасным кодом этапа ошибки. Он не участвует в запуске служб и не
 доказывает LAN forwarding. Owner/group/mode существующих системных файлов не
 являются критерием исправности; реальные I/O errors и ошибки конфигурации остаются.
 
@@ -158,8 +153,8 @@ annotations. nft меняется внутри `helper:begin/end gateway`; вн�
 сохраняется. Первичная разметка существующего файла требует preview и confirm.
 Синтаксическая проверка не доказывает совместимость с чужими правилами.
 
-Перед системным apply фиксируется единый baseline из шести файлов:
-nft/sysctl/routing unit, lifecycle script, Xray drop-in и независимая sysctl unit.
+Перед системным apply фиксируется единый baseline из четырёх файлов:
+nft/sysctl/routing unit и Xray drop-in.
 Rollback, timeout или прерванный неподтверждённый apply восстанавливают всю группу,
 её UID/GID/mode и исходное отсутствие. Историческая группа из трёх файлов
 поддерживается только для восстановления ранее записанной операции. Live-эффекты не откатываются:

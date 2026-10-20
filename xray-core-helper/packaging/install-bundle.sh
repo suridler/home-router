@@ -85,7 +85,6 @@ for stem in xray-core-helper-routing xray-core-helper-errors update-xray-geodata
   rm -f -- "/etc/systemd/system/$stem.timer" "/etc/systemd/system/$stem.service"
 done
 install -d -o root -g root -m 0700 /var/lib/xray-core-helper-update
-install -d -o root -g root -m 0755 /usr/local/libexec/xray-tproxy /run/xray-tproxy
 systemd-sysusers "$helper_root/packaging/sysusers.d/xray-core-helper.conf"
 install -Dm0755 "$build_dir/xray-core-helperd" /usr/local/sbin/xray-core-helperd
 install -Dm0755 "$build_dir/xray-core-helper" /usr/local/bin/xray-core-helper

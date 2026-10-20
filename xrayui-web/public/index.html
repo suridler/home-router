@@ -186,7 +186,6 @@
           <section class="panel full-width"><div class="section-heading"><h3>Управление TProxy</h3><div class="actions">
 
             <button class="secondary" x-cloak x-show="status && !status.tproxy?.ok" :disabled="!canMutate()" @click="runAction('network-start')">Включить TProxy с подтверждением</button>
-          <button class="secondary" :disabled="!canMutate()" @click="runAction('network-enable')">Автозапуск TProxy</button>
           </div></div><p class="notice">Включение TProxy требует подтверждения. Автозапуск применяется отдельным действием.</p></section>
         </section>
 

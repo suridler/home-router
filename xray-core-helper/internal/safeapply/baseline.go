@@ -47,12 +47,12 @@ func validateBaseline(files []BaselineFile) error {
 }
 
 func validateBaselineGroup(files []BaselineFile, legacy bool) error {
-	if len(files) != 6 && !(legacy && len(files) == 3) {
+	if len(files) != 4 && !(legacy && len(files) == 3) {
 		return ErrBaseline
 	}
 	seen := make(map[templatecatalog.ID]bool, len(files))
 	for _, file := range files {
-		if (!systemMember(file.TemplateID) && (len(files) != 6 || !templateapply.LifecycleMember(file.TemplateID))) || seen[file.TemplateID] || len(file.Content) > maxBaselineBytes || file.Mode & ^uint32(0777) != 0 {
+		if (!systemMember(file.TemplateID) && (len(files) != 4 || !templateapply.LifecycleMember(file.TemplateID))) || seen[file.TemplateID] || len(file.Content) > maxBaselineBytes || file.Mode & ^uint32(0777) != 0 {
 			return ErrBaseline
 		}
 		if !file.Present && (len(file.Content) != 0 || file.Mode != 0 || file.UID != 0 || file.GID != 0) {

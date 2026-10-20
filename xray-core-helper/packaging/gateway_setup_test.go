@@ -12,18 +12,18 @@ func TestGatewayBootIsIndependentOfHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, forbidden := range []string{"xray-core-helper", "After=xray.service", "BindsTo=", "PartOf=", "network-check"} {
+	for _, forbidden := range []string{"xray-core-helper", "After=xray.service", "BindsTo=", "PartOf=", "network-check", "ConditionPathExists", "[Install]", "xray-tproxy/network"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatal("control-plane dependency in native lifecycle", forbidden)
 		}
 	}
-	for _, required := range []string{"ConditionPathExists=/run/xray-tproxy/started", "ExecStart=/usr/local/libexec/xray-tproxy/network on", "ExecStopPost=/usr/local/libexec/xray-tproxy/network off"} {
+	for _, required := range []string{"ExecStart=/sbin/ip route add local default dev lo table ${TPROXY_TABLE}", "ExecStart=/sbin/ip rule add fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}", "ExecStopPost=-/sbin/ip rule del fwmark ${TPROXY_MARK} table ${TPROXY_TABLE}"} {
 		if !strings.Contains(text, required) {
 			t.Fatal(required)
 		}
 	}
 	dropin := readAsset(t, "systemd", "50-tproxy.conf")
-	for _, required := range []string{"ExecStartPost=+/usr/local/libexec/xray-tproxy/network xray-start", "ExecStop=+/usr/local/libexec/xray-tproxy/network xray-stop", "ExecStopPost=+/usr/local/libexec/xray-tproxy/network xray-stop"} {
+	for _, required := range []string{"ExecStartPost=+/usr/bin/systemctl start xray-tproxy-routing.service", "ExecStop=+/usr/bin/systemctl stop xray-tproxy-routing.service", "ExecStopPost=+/usr/bin/systemctl stop xray-tproxy-routing.service"} {
 		if !hasLine(dropin, required) {
 			t.Fatal(required)
 		}
@@ -39,13 +39,13 @@ func TestGatewayBootIsIndependentOfHelper(t *testing.T) {
 
 func TestNativeFactorySourcesAreSeparateFromInstalledNetwork(t *testing.T) {
 	script := readAsset(t, "install-templconf.sh")
-	for _, want := range []string{"/usr/share/xray-core-helper/native", "xray-tproxy-network.py", "50-tproxy.conf", "xray-tproxy-sysctl.service"} {
+	for _, want := range []string{"/usr/share/xray-core-helper/native", "50-tproxy.conf"} {
 		if !strings.Contains(script, want) {
 			t.Fatal(want)
 		}
 	}
 	uninstall := readAsset(t, "uninstall-bundle.sh")
-	for _, path := range []string{"/usr/local/libexec/xray-tproxy/network", "/etc/systemd/system/xray.service.d/50-tproxy.conf", "/etc/systemd/system/xray-tproxy-sysctl.service"} {
+	for _, path := range []string{"/etc/systemd/system/xray.service.d/50-tproxy.conf"} {
 		if strings.Contains(uninstall, "rm -f -- "+path) {
 			t.Fatal("uninstall removes native asset", path)
 		}

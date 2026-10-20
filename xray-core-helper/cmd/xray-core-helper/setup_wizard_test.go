@@ -100,7 +100,7 @@ func TestWizardAllowsConfirmAfterFailedProbeAndRetryDoesNotReapply(t *testing.T)
 				t.Error("probe lost transaction")
 			}
 			json.NewEncoder(w).Encode(map[string]any{"reachable": false, "https": map[string]string{"status": "failed", "code": "tls_failed"}})
-		case "/v1/safe-apply/tx-failed-probe/confirm", "/v1/xray/services/tproxy/enable":
+		case "/v1/safe-apply/tx-failed-probe/confirm":
 			json.NewEncoder(w).Encode(map[string]any{})
 		default:
 			t.Error("unexpected call", r.URL.Path)
@@ -113,7 +113,7 @@ func TestWizardAllowsConfirmAfterFailedProbeAndRetryDoesNotReapply(t *testing.T)
 	for _, path := range paths {
 		counts[path]++
 	}
-	if code != 0 || counts["/v1/templates/tproxy-unit/apply"] != 1 || counts["/v1/network/probe"] != 3 || counts["/v1/safe-apply/tx-failed-probe/confirm"] != 1 || counts["/v1/xray/services/tproxy/enable"] != 1 {
+	if code != 0 || counts["/v1/templates/tproxy-unit/apply"] != 1 || counts["/v1/network/probe"] != 3 || counts["/v1/safe-apply/tx-failed-probe/confirm"] != 1 || counts["/v1/xray/services/tproxy/enable"] != 0 {
 		t.Fatal(code, counts, stderr.String())
 	}
 }
