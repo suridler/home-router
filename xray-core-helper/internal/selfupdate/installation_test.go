@@ -85,6 +85,14 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 	}
 	working := env.fs.Path("/etc/xray-core-helper/templConf/operator.txt")
 	writeLifecycleFile(t, working, "operator working template")
+	shipped := []string{"xray/config.json", "nftables/nftables.conf", "systemd/xray-tproxy-routing.service", "sysctl/99-xray.conf"}
+	for _, name := range shipped {
+		writeLifecycleFile(t, env.fs.Path("/etc/xray-core-helper/templConf/"+name), "previous template: "+name)
+	}
+	systemFiles := []string{"/usr/local/etc/xray/config.json", "/etc/nftables.conf", "/etc/sysctl.d/99-xray.conf", "/etc/systemd/system/xray-tproxy-routing.service", "/etc/systemd/system/xray.service.d/50-tproxy.conf"}
+	for _, name := range systemFiles {
+		writeLifecycleFile(t, env.fs.Path(name), "active system file: "+name)
+	}
 	admin := env.fs.Path("/etc/systemd/system/xray-core-helper.service.d/90-admin.conf")
 	writeLifecycleFile(t, admin, "[Service]\nEnvironment=USER_CHOICE=1\n")
 	env.runner.output = []byte("[Service]\nReadWritePaths=/usr/local/share/xray\n")
@@ -97,6 +105,21 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 		t.Fatalf("wrong operation: %#v", op)
 	}
 	env.e.Check = func(context.Context, *Operation) error {
+		for _, name := range shipped {
+			path := env.fs.Path("/etc/xray-core-helper/templConf/" + name)
+			if got := readLifecycleFile(t, path); got != lifecycleCandidateFiles["xray-core-helper/templConf/"+name] {
+				t.Fatalf("template %s was not updated: %q", name, got)
+			}
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != 0600 {
+				t.Fatalf("template %s metadata: %v %v", name, info, err)
+			}
+		}
+		for _, name := range systemFiles {
+			if got := readLifecycleFile(t, env.fs.Path(name)); got != "active system file: "+name {
+				t.Fatalf("update changed active system file %s", name)
+			}
+		}
 		writeLifecycleFile(t, dbPath, "simulated new incompatible database")
 		return errors.New("verify_failed")
 	}
@@ -120,6 +143,11 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 	}
 	if got := readLifecycleFile(t, admin); !strings.Contains(got, "USER_CHOICE") {
 		t.Fatal("admin drop-in changed")
+	}
+	for _, name := range shipped {
+		if got := readLifecycleFile(t, env.fs.Path("/etc/xray-core-helper/templConf/"+name)); got != "previous template: "+name {
+			t.Fatalf("rollback did not restore template %s: %q", name, got)
+		}
 	}
 	final, _ := env.e.Store.Load()
 	if final.State != "rolled_back" {

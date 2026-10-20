@@ -97,6 +97,10 @@ func installLifecycleInstaller(t *testing.T, e *Engine) string {
 }
 
 var lifecycleCandidateFiles = map[string]string{
+	"xray-core-helper/templConf/xray/config.json":                            "new-xray-template\n",
+	"xray-core-helper/templConf/nftables/nftables.conf":                      "new-nft-template\n",
+	"xray-core-helper/templConf/systemd/xray-tproxy-routing.service":         "new-routing-template\n",
+	"xray-core-helper/templConf/sysctl/99-xray.conf":                         "new-sysctl-template\n",
 	"xray-core-helper/bin/xray-core-helper":                                  "new-helper\n",
 	"xray-core-helper/bin/xray-core-helperd":                                 "new-helperd\n",
 	"xray-core-helper/bin/domain-list-community":                             "new-domain-list\n",

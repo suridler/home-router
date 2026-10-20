@@ -85,6 +85,48 @@ func TestTemplateTmpfilesFirstInstallAndRepeatAreSafe(t *testing.T) {
 	assertInstalledMetadata(t, preserved, 0600, uid, gid)
 }
 
+// Run the source installer against a temporary filesystem with real install(1).
+// Ownership and tmpfiles are covered separately by the tmpfiles fixtures.
+func TestSourceInstallRefreshesShippedTemplatesWithoutApplying(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "bundle")
+	script := readAsset(t, "install-templconf.sh")
+	script = strings.NewReplacer("$(id -u)", "0", "-o root -g root ", "", "/usr/share/xray-core-helper", filepath.Join(root, "usr/share/xray-core-helper"), "/etc/xray-core-helper", filepath.Join(root, "etc/xray-core-helper")).Replace(script)
+	script = strings.ReplaceAll(script, "systemd-tmpfiles --create", ":")
+	scriptPath := filepath.Join(project, "packaging/install-templconf.sh")
+	writeTemplateFixture(t, scriptPath, []byte(script), 0700)
+	writeTemplateFixture(t, filepath.Join(project, "packaging/systemd/50-tproxy.conf"), []byte("factory hook"), 0644)
+	working := filepath.Join(root, "etc/xray-core-helper/templConf")
+	for _, asset := range templateAssets {
+		writeTemplateFixture(t, filepath.Join(working, asset.directory, asset.name), []byte("old template"), 0600)
+	}
+	extra := filepath.Join(working, "operator.txt")
+	system := filepath.Join(root, "etc/nftables.conf")
+	writeTemplateFixture(t, extra, []byte("operator file"), 0600)
+	writeTemplateFixture(t, system, []byte("active rules"), 0644)
+	for _, version := range []string{"first install", "updated release"} {
+		for _, asset := range templateAssets {
+			writeTemplateFixture(t, filepath.Join(project, "templConf", asset.directory, asset.name), []byte(version), 0644)
+		}
+		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
+			t.Fatalf("source install: %v: %s", err, output)
+		}
+		for _, asset := range templateAssets {
+			path := filepath.Join(working, asset.directory, asset.name)
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != version {
+				t.Fatalf("%s: %q %v", path, got, err)
+			}
+		}
+		for path, want := range map[string]string{extra: "operator file", system: "active rules"} {
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != want {
+				t.Fatalf("installer changed %s: %q %v", path, got, err)
+			}
+		}
+	}
+}
+
 func writeTestTmpfilesConfig(t *testing.T, root string, uid, gid int) string {
 	t.Helper()
 	production := readAsset(t, "tmpfiles.d", "xray-core-helper.conf")

@@ -353,6 +353,11 @@ func Targets(bundle string, web bool) []Target {
 		{"/etc/sysusers.d/xray-core-helper.conf", filepath.Join(h, "packaging/sysusers.d/xray-core-helper.conf"), 0644},
 		{"/etc/tmpfiles.d/xray-core-helper.conf", filepath.Join(h, "packaging/tmpfiles.d/xray-core-helper.conf"), 0644},
 	}
+	// Shipped working templates follow the installed release. This only replaces
+	// template sources; applying them to Xray/native system files remains explicit.
+	for _, name := range []string{"xray/config.json", "nftables/nftables.conf", "systemd/xray-tproxy-routing.service", "sysctl/99-xray.conf"} {
+		v = append(v, Target{"/etc/xray-core-helper/templConf/" + name, filepath.Join(h, "templConf", name), 0600})
+	}
 	// Releases predating native lifecycle have none of these factory sources.
 	// They remain installable; active native files are never downgrade targets.
 	// An existing source remains in the inventory so preparation validates it.

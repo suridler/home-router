@@ -26,3 +26,9 @@ install -d -o root -g root -m 0755 /usr/share/xray-core-helper/native
 install -o root -g root -m 0644 "$project_dir/packaging/systemd/50-tproxy.conf" /usr/share/xray-core-helper/native/50-tproxy.conf
 
 systemd-tmpfiles --create "$project_dir/packaging/tmpfiles.d/xray-core-helper.conf"
+
+# Template delivery follows the release. Applying to system files is explicit.
+working_root=/etc/xray-core-helper/templConf
+for name in xray/config.json nftables/nftables.conf systemd/xray-tproxy-routing.service sysctl/99-xray.conf; do
+    install -o root -g root -m 0600 "$factory_root/$name" "$working_root/$name"
+done

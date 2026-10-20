@@ -139,9 +139,12 @@ Installation and acceptance checks:
    Document runtime DNS lag and the temporary individual-domain exception.
 
 
-The repository tree is package input only. Installation copies missing files
-to the private working tree `/etc/xray-core-helper/templConf` and never edits
-this checkout at runtime.
+The repository tree is package input only. Installation and upgrade replace the four shipped files
+in the private working tree `/etc/xray-core-helper/templConf`; extra user files
+remain untouched. System configs are not replaced: applying a new template or
+accepting the system version is an explicit operator choice. Update rollback
+restores the previous templates. Boot-time tmpfiles only seeds missing files
+and never overwrites an existing template. Runtime never edits this checkout.
 
 | Template ID | Repository file | Installed working file | System file | Working-template owner/mode |
 | --- | --- | --- | --- | --- |

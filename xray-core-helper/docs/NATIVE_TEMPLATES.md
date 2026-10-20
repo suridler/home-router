@@ -50,6 +50,16 @@ The trusted catalog binds each template ID to fixed destinations, permissions,
 validator, adapter and recovery scope. Source content never expands that scope.
 Unsupported operation scope is an adapter limitation, not a routing mismatch.
 
+## Template delivery
+
+Install/upgrade replaces the four shipped working templates in
+`/etc/xray-core-helper/templConf` along with the factory copies in `/usr/share`.
+Extra user files, TOML and history remain intact. System configs and the active
+Xray drop-in remain unchanged until an explicit apply; accept-system remains
+available to keep the system variant. Installer rollback restores prior templates.
+Boot-time tmpfiles only seeds missing files. Parameter migration is separate
+from delivering the release templates.
+
 ## Factory placeholders and persisted network selection
 
 The shipped nftables/routing-unit templates contain typed placeholders rather

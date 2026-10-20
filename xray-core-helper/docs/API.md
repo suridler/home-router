@@ -222,11 +222,15 @@ Xray config/сеть и не перезапускает Xray/TProxy.
 хранятся в `/var/lib/xray-core-helper-update`, вне восстанавливаемых каталогов;
 публичная запись операции не содержит fingerprints, digest и пути конфигурации.
 
-Обновление сохраняет `/etc/xray-core-helper` и `/var/lib/xray-core-helper`
-(TOML, SQLite, рабочие шаблоны/backups, admin drop-in) и наличие установленной
-панели; заменяет заводской `/usr/share/xray-core-helper/templConf`, managed
+Обновление сохраняет настройки и данные в `/etc/xray-core-helper` и
+`/var/lib/xray-core-helper` (TOML, SQLite, backups, дополнительные пользовательские
+файлы, admin drop-in) и наличие установленной
+панели; заменяет четыре поставляемых рабочих шаблона в `/etc/xray-core-helper/templConf`,
+заводской `/usr/share/xray-core-helper/templConf`, managed
 units и, если панель установлена, `/opt/xrayui-web`. Собственный drop-in
-`20-installation-paths.conf` пересоздаётся. При `preparing`/`launching`/
+`20-installation-paths.conf` пересоздаётся. Обновлённые шаблоны не применяются к
+системным файлам автоматически: пользователь рассматривает расхождения и выбирает
+apply/accept-system. Откат обновления возвращает предыдущие рабочие шаблоны. При `preparing`/`launching`/
 `applying`/`verifying`, а также после `failed`/`interrupted` обычные изменяющие
 запросы получают 409 `update_pending`; чтение разрешено, состояние `prepared`
 само по себе изменений не блокирует. После прерывания daemon обслуживает
