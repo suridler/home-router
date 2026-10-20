@@ -1,0 +1,87 @@
+package domainservice
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"home-router/xray-core-helper/internal/coordinator"
+	"home-router/xray-core-helper/internal/domain"
+)
+
+var (
+	errRuntimeIdentityUnavailable = errors.New("domain runtime identity unavailable")
+	errRuntimeIdentityEmpty       = errors.New("domain runtime identity is empty")
+	errRuntimeIdentityChanged     = errors.New("domain runtime identity changed during reconciliation")
+)
+
+// RuntimeReconciler reapplies the desired proxy-domain overlay when the Xray
+// runtime identity changes. The last successful identity is intentionally kept
+// in memory only: after a helper restart one replay is safe because the typed
+// routing payload replaces the managed runtime rule group.
+type RuntimeReconciler struct {
+	service   *Service
+	identity  func(context.Context) (string, error)
+	lastToken string
+}
+
+// NewRuntimeReconciler creates a runtime reconciler. Reconcile calls are
+// serialized by the same process mutation coordinator used by Service.Apply,
+// so lastToken needs no separate mutex.
+func NewRuntimeReconciler(service *Service, identity func(context.Context) (string, error)) (*RuntimeReconciler, error) {
+	if service == nil || identity == nil {
+		return nil, errors.New("domain runtime reconciler requires service and identity")
+	}
+	return &RuntimeReconciler{service: service, identity: identity}, nil
+}
+
+// Reconcile synchronizes the desired proxy-domain overlay when the runtime
+// identity differs from the last successfully applied one. It reports whether
+// a runtime apply occurred. The token is recorded only after a successful
+// apply and a stable second identity check, so any failure is retried by the
+// next scheduled invocation.
+func (reconciler *RuntimeReconciler) Reconcile(ctx context.Context) (bool, error) {
+	lease, err := coordinator.Acquire(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer lease.Release()
+
+	snapshot, err := reconciler.service.store.Snapshot(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read proxy-domain state for runtime reconciliation: %w", err)
+	}
+	if snapshot.ConsolidationActive {
+		return false, domain.ErrConsolidationActive
+	}
+
+	token, err := reconciler.identity(ctx)
+	if err != nil {
+		return false, errRuntimeIdentityUnavailable
+	}
+	if strings.TrimSpace(token) == "" {
+		return false, errRuntimeIdentityEmpty
+	}
+	if token == reconciler.lastToken {
+		return false, nil
+	}
+
+	if err := reconciler.service.ApplyWhileLocked(ctx); err != nil {
+		return false, fmt.Errorf("apply desired proxy domains during runtime reconciliation: %w", err)
+	}
+
+	current, err := reconciler.identity(ctx)
+	if err != nil {
+		return false, errRuntimeIdentityUnavailable
+	}
+	if strings.TrimSpace(current) == "" {
+		return false, errRuntimeIdentityEmpty
+	}
+	if current != token {
+		return false, errRuntimeIdentityChanged
+	}
+
+	reconciler.lastToken = token
+	return true, nil
+}

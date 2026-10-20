@@ -1,0 +1,246 @@
+package selfupdate
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"home-router/xray-core-helper/internal/bootstrap"
+)
+
+func localReleaseFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeLifecycleCandidate(t, root, true)
+	hashes := map[string]string{}
+	for _, name := range []string{"xray-core-helper", "xray-core-helperd", "domain-list-community"} {
+		contents := make([]byte, 72)
+		copy(contents, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+		binary.LittleEndian.PutUint16(contents[16:], 2)
+		machine := uint16(62)
+		if runtime.GOARCH == "arm64" {
+			machine = 183
+		}
+		binary.LittleEndian.PutUint16(contents[18:], machine)
+		copy(contents[64:], name)
+		p := filepath.Join(root, "xray-core-helper/bin", name)
+		if err := os.WriteFile(p, contents, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(contents)
+		hashes[name] = hex.EncodeToString(hash[:])
+	}
+	m := Manifest{SchemaVersion: 1, Version: "helper-v2.0.0", Commit: strings.Repeat("a", 40), OS: "linux", Arch: runtime.GOARCH, Binaries: hashes, Dependencies: json.RawMessage(`{"domain-list-community":{"repository":"example.test","commit":"abc"}}`)}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLifecycleFile(t, filepath.Join(root, "release.json"), string(raw))
+	return root
+}
+
+func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
+	env := newLifecycleEnv(t)
+	seedLifecycleInstalled(t, env)
+	writeLifecycleFile(t, env.fs.Path(ManifestPath), `{"schemaVersion":1,"version":"helper-v1.0.0","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","os":"linux","arch":"amd64","binaries":{},"dependencies":{"domain-list-community":{"commit":"abc"}}}`)
+	writeLifecycleFile(t, env.fs.Path("/usr/local/sbin/xray-core-helperd"), "old daemon")
+	writeLifecycleFile(t, env.fs.Path("/etc/xray-core-helper/helper.env"), "XRAY_HELPER_WEB_ENABLED=1\n")
+	writeLifecycleFile(t, env.e.InstallerSource, "saved installer")
+	cfg := bootstrap.Defaults()
+	dbPath := env.fs.Path(cfg.Storage.Database)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("CREATE TABLE acceptance(value TEXT); INSERT INTO acceptance VALUES ('original')"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	original, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	working := env.fs.Path("/etc/xray-core-helper/templConf/operator.txt")
+	writeLifecycleFile(t, working, "operator working template")
+	admin := env.fs.Path("/etc/systemd/system/xray-core-helper.service.d/90-admin.conf")
+	writeLifecycleFile(t, admin, "[Service]\nEnvironment=USER_CHOICE=1\n")
+	env.runner.output = []byte("[Service]\nReadWritePaths=/usr/local/share/xray\n")
+	candidate := localReleaseFixture(t)
+	op, err := env.e.PrepareLocal(context.Background(), candidate, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Fresh || !op.Web || op.State != "prepared" {
+		t.Fatalf("wrong operation: %#v", op)
+	}
+	env.e.Check = func(context.Context, *Operation) error {
+		writeLifecycleFile(t, dbPath, "simulated new incompatible database")
+		return errors.New("verify_failed")
+	}
+	if err = env.e.Direct(context.Background(), op.ID, "apply"); err == nil {
+		t.Fatal("verification failure accepted")
+	}
+	failed, _ := env.e.Store.Load()
+	if failed.State != "failed" || !failed.SnapshotReady {
+		t.Fatalf("recovery evidence: %#v", failed)
+	}
+	env.e.Check = func(context.Context, *Operation) error { return nil }
+	if err = env.e.Direct(context.Background(), op.ID, "rollback"); err != nil {
+		t.Fatal(err)
+	}
+	restored, _ := os.ReadFile(dbPath)
+	if string(restored) != string(original) {
+		t.Fatal("rollback lost consistent database")
+	}
+	if got := readLifecycleFile(t, working); got != "operator working template" {
+		t.Fatal(got)
+	}
+	if got := readLifecycleFile(t, admin); !strings.Contains(got, "USER_CHOICE") {
+		t.Fatal("admin drop-in changed")
+	}
+	final, _ := env.e.Store.Load()
+	if final.State != "rolled_back" {
+		t.Fatal(final.State)
+	}
+	for _, call := range env.runner.calls {
+		if strings.Contains(call, "xray.service") || strings.Contains(call, "xray-tproxy-routing.service") {
+			t.Fatalf("unexpected data-plane action: %s", call)
+		}
+	}
+}
+
+func TestWorkerLockLaunchHandoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.lock")
+	release, err := Lock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired := make(chan error, 1)
+	go func() {
+		done, err := waitForWorkerLock(context.Background(), path)
+		if err == nil {
+			done()
+		}
+		acquired <- err
+	}()
+	select {
+	case err = <-acquired:
+		t.Fatalf("worker failed before handoff: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	select {
+	case err = <-acquired:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handoff did not finish")
+	}
+}
+
+func TestPreflightRejectsFilesystemEvidenceWithoutDatabase(t *testing.T) {
+	for _, pending := range []string{"/var/lib/xray-core-helper/setup/pending.json", "/usr/local/share/xray/.xray-core-helper-pending/manifest.json", "/usr/local/share/xray/.xray-core-helper-consolidation-pending/manifest.json"} {
+		t.Run(filepath.Base(filepath.Dir(pending)), func(t *testing.T) {
+			env := newLifecycleEnv(t)
+			writeLifecycleFile(t, env.fs.Path(pending), "evidence")
+			if err := env.e.Preflight(context.Background()); err == nil {
+				t.Fatal("pending evidence ignored")
+			}
+		})
+	}
+}
+
+func TestFreshHeadlessInstallsWithStandaloneSetupBeforeDaemon(t *testing.T) {
+	env := newLifecycleEnv(t)
+	writeLifecycleFile(t, env.e.InstallerSource, "saved installer")
+	env.runner.output = []byte("[Service]\nReadWritePaths=/usr/local/share/xray\n")
+	setupCalled := false
+	env.e.Setup = func(context.Context) error {
+		setupCalled = true
+		if release, err := Lock(filepath.Join(env.e.Store.Root, "runtime.lock")); err == nil {
+			release()
+			t.Fatal("setup ran without exclusive ownership")
+		}
+		for _, call := range env.runner.calls {
+			if strings.Contains(call, " start xray-core-helper.service") {
+				t.Fatal("daemon started before standalone setup")
+			}
+		}
+		return nil
+	}
+	web := false
+	op, err := env.e.PrepareLocal(context.Background(), localReleaseFixture(t), &web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !op.Fresh || op.Web {
+		t.Fatalf("wrong fresh components: %#v", op)
+	}
+	if err = env.e.Direct(context.Background(), op.ID, "apply"); err != nil {
+		t.Fatal(err)
+	}
+	if !setupCalled {
+		t.Fatal("standalone setup omitted")
+	}
+	for _, call := range env.runner.calls {
+		if strings.Contains(call, "npm") || strings.Contains(call, "xrayui-web") {
+			t.Fatalf("headless web action: %s", call)
+		}
+	}
+	if _, err = os.Stat(env.fs.Path("/opt/xrayui-web")); !os.IsNotExist(err) {
+		t.Fatal("web installed on headless host")
+	}
+	final, _ := env.e.Store.Load()
+	if final.State != "succeeded" {
+		t.Fatal(final.State)
+	}
+}
+
+func TestExplicitOlderAndSameLocalVersions(t *testing.T) {
+	env := newLifecycleEnv(t)
+	writeLifecycleFile(t, env.e.InstallerSource, "saved installer")
+	writeLifecycleFile(t, env.fs.Path("/usr/local/sbin/xray-core-helperd"), "installed daemon")
+	writeLifecycleFile(t, env.fs.Path("/etc/xray-core-helper/helper.env"), "XRAY_HELPER_WEB_ENABLED=0\n")
+	writeLifecycleFile(t, env.fs.Path(ManifestPath), `{"schemaVersion":1,"version":"helper-v2.0.0","binaries":{},"minimum_installable_version":"helper-v1.0.0"}`)
+	env.runner.output = []byte("[Service]\nReadWritePaths=/usr/local/share/xray\n")
+	for _, version := range []string{"helper-v2.0.0", "helper-v1.0.0"} {
+		root := localReleaseFixture(t)
+		path := filepath.Join(root, "release.json")
+		raw, _ := os.ReadFile(path)
+		var m Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		m.Version = version
+		raw, _ = json.Marshal(m)
+		writeLifecycleFile(t, path, string(raw))
+		op, err := env.e.PrepareLocal(context.Background(), root, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = env.e.Direct(context.Background(), op.ID, "apply"); err != nil {
+			t.Fatal(err)
+		}
+		installed, err := env.e.manifest()
+		if err != nil || installed.Version != version {
+			t.Fatalf("target=%s: %#v %v", version, installed, err)
+		}
+	}
+}

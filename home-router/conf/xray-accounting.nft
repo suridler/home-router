@@ -1,0 +1,66 @@
+table inet xray_accounting {
+
+    # Example interface and documentation addresses: replace before applying.
+    define LAN_IF     = "lan0"
+    define LAN_NET    = 192.0.2.0/24
+    define ROUTER_IP  = 192.0.2.10
+
+    set local_v4 {
+        type ipv4_addr
+        flags interval
+        elements = {
+            0.0.0.0/8,
+            10.0.0.0/8,
+            127.0.0.0/8,
+            169.254.0.0/16,
+            172.16.0.0/12,
+            192.168.0.0/16,
+            224.0.0.0/4,
+            255.255.255.255/32
+        }
+    }
+
+    set upload_v4 {
+        type ipv4_addr
+        size 1024
+        flags dynamic,timeout
+        timeout 30d
+        counter
+    }
+
+    set download_v4 {
+        type ipv4_addr
+        size 1024
+        flags dynamic,timeout
+        timeout 30d
+        counter
+    }
+
+    #
+    # LAN client -> Internet
+    #
+    chain prerouting_account {
+        type filter hook prerouting priority -160;
+        policy accept;
+
+        iifname $LAN_IF \
+        ip saddr $LAN_NET \
+        ip saddr != $ROUTER_IP \
+        ip daddr != @local_v4 \
+        update @upload_v4 { ip saddr counter }
+    }
+
+    #
+    # Xray/local process -> LAN client
+    #
+    chain output_account {
+        type filter hook output priority -160;
+        policy accept;
+
+        oifname $LAN_IF \
+        ip daddr $LAN_NET \
+        ip daddr != $ROUTER_IP \
+        ip saddr != @local_v4 \
+        update @download_v4 { ip daddr counter }
+    }
+}

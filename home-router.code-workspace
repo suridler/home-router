@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"name": "xrayui-web",
+			"path": "xrayui-web"
+		},
+		{
+			"name": "home-router",
+			"path": "home-router"
+		},
+		{
+			"name": "xray-monitoring-docker",
+			"path": "xray-monitoring-docker"
+		},
+		{
+			"name": "xray-routing-exporter",
+			"path": "xray-routing-exporter"
+		},
+		{
+			"path": "xray-core-helper"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,78 @@
+name: Helper release
+on:
+  push:
+    tags: ['helper-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing helper-v tag to build and publish
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: helper-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: xray-core-helper/go.mod
+          cache-dependency-path: xray-core-helper/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: xrayui-web/package-lock.json
+      - name: Validate release tag
+        run: |
+          python3 -c 'import os,re; assert re.fullmatch(r"helper-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?",os.environ["RELEASE_VERSION"])'
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_VERSION^{commit}")"
+      - name: Go checks
+        working-directory: xray-core-helper
+        run: |
+          test -z "$(gofmt -l ./cmd ./internal)"
+          go test ./...
+          go test -race ./...
+          go build ./cmd/...
+          go vet ./...
+      - name: Web checks
+        working-directory: xrayui-web
+        run: |
+          npm ci
+          npm test
+      - name: Packaging checks
+        working-directory: xray-core-helper
+        run: |
+          python3 -B -m unittest discover -s packaging -p 'test_*.py'
+          bash -n packaging/install-from-github.sh packaging/install-bundle.sh packaging/12h1-clean-host-smoke.sh
+          git diff --check
+      - name: Build Linux amd64 and arm64 bundles
+        run: python3 xray-core-helper/packaging/build-release.py "$RELEASE_VERSION" "$RUNNER_TEMP/helper-dist"
+      - name: Publish release after all builds succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=(); latest=true
+          case "${RELEASE_VERSION#helper-v}" in *-*) prerelease+=(--prerelease); latest=false;; esac
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Prebuilt Linux amd64/arm64 helper bundles, native templates, units, web and T8 tools from one commit.
+          SHA256SUMS covers both architecture archives and both raw CLI assets. Install with the attached install-from-github.sh and --version TAG.
+          Go is not required on the target server. Web requires Node.js/npm; scripts require Python 3.
+          Real-host clean-install, LAN forwarding and manual reboot acceptance remain separate gates.
+          NOTES
+          gh release create "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --draft "${prerelease[@]}" --title "$RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/helper-dist/"*
+          gh release edit "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"

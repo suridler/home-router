@@ -1,0 +1,79 @@
+[network]
+# Setup persists the selected LAN here. Empty until network preparation.
+interface = ""
+address = ""
+ipv4_prefix = ""
+# Kernel routing parameters; separate from Xray outgoing socket mark.
+intercept_mark = 1
+policy_table = 100
+
+[logging]
+# Inputs for explicitly annotated Xray templates. Applied only on prepare/apply;
+# not a request to change the running Xray configuration at helper startup.
+# "none" disables a log; "" writes stdout (systemd journal); absolute path = file.
+access_path = "none"
+error_path = ""
+level = "warning"
+dns_log = false
+
+[backup]
+retain_per_template = 10
+
+[scheduler]
+# Daily geodata update in server local time. Restart helper after changes.
+geodata_update_enabled = true
+geodata_update_time = "04:00"
+
+[connectivity]
+# Server IPv4 HTTPS probe before/after TProxy. Does not assert LAN forwarding.
+url = "https://www.google.com/generate_204"
+expected_status = 204
+timeout_seconds = 15
+
+[web]
+# Read by web through helper API before it starts listening.
+# Use a specific local IP, never a wildcard. Defaults remain loopback-only.
+host = "127.0.0.1"
+port = 3000
+control_enabled = true
+# Read-only traffic snapshots; empty disables charts. HTTP loopback origin only.
+exporter_url = "http://127.0.0.1:9101"
+
+[xray]
+# Binary/config are discovered from xray.service ExecStart (including drop-ins).
+# Assets require an explicit XRAY_LOCATION_ASSET in its supported environment.
+api = "127.0.0.1:10085"
+
+[geodata]
+# Maximum size of each geodata file in MB (1024 * 1024 bytes).
+max_asset_size_mb = 256
+# Fixed geosite builder executable used by consolidation.
+builder = "/usr/local/bin/domain-list-community"
+# Managed user geosite filename; restart helper after changing.
+user_geosite = "geosite_user.dat"
+# Filename for the Xray geoip binding; asset/list setup is tracked in ROADMAP.
+user_geoip = "geoip_user.dat"
+# Installation defaults: runetfreedom GeoSite/GeoIP with SHA-256 verification.
+# To disable remote sources, clear origins and all four URLs below.
+origins = ["https://raw.githubusercontent.com"]
+
+[geodata.geosite]
+url = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/geosite.dat"
+
+[geodata.geosite.checksum]
+url = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/geosite.dat.sha256sum"
+algorithm = "sha256"
+
+[geodata.geoip]
+url = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/geoip.dat"
+
+[geodata.geoip.checksum]
+url = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/geoip.dat.sha256sum"
+algorithm = "sha256"
+
+[storage]
+database = "/var/lib/xray-core-helper/helper.sqlite"
+
+[server]
+socket = "/run/xray-core-helper/helper.sock"
+socket_group = "xray-core-helper"

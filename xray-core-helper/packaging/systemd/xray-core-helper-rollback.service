@@ -1,0 +1,12 @@
+[Unit]
+Description=Rollback unconfirmed Xray native configuration
+Requires=xray-core-helper.service
+After=xray-core-helper.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/xray-core-helper -config /etc/xray-core-helper/config.toml safe-apply rollback-pending
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

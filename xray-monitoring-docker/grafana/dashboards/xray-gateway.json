@@ -1,0 +1,724 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 100,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "barAlignment": 0,
+            "barWidthFactor": 0.7
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 8
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(xray_traffic_bytes_total{scope=\"outbound\",tag=\"proxy\",direction=\"downlink\"}[5m])",
+          "legendFormat": "Proxy ↑",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "rate(xray_traffic_bytes_total{scope=\"outbound\",tag=\"direct\",direction=\"downlink\"}[5m])",
+          "legendFormat": "Direct ↑",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "-rate(xray_traffic_bytes_total{scope=\"outbound\",tag=\"proxy\",direction=\"uplink\"}[5m])",
+          "legendFormat": "Proxy ↓",
+          "range": true
+        },
+        {
+          "refId": "D",
+          "expr": "-rate(xray_traffic_bytes_total{scope=\"outbound\",tag=\"direct\",direction=\"uplink\"}[5m])",
+          "legendFormat": "Direct ↓",
+          "range": true
+        }
+      ],
+      "title": "Xray traffic rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "xray-api"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 13,
+      "options": {
+        "footer": {
+          "enablePagination": true,
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "client_ip",
+              "text": "Client",
+              "type": "string"
+            },
+            {
+              "selector": "destination",
+              "text": "Destination",
+              "type": "string"
+            },
+            {
+              "selector": "outbound",
+              "text": "Outbound",
+              "type": "string"
+            },
+            {
+              "selector": "events",
+              "text": "Events",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "rows",
+          "source": "url",
+          "type": "json",
+          "url": "http://127.0.0.1:9101/api/v1/stats/hour/summary?client=${client}&limit=20",
+          "url_options": {
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Last 1h — top destinations (selected client)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "xray-api"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 14,
+      "options": {
+        "footer": {
+          "enablePagination": true,
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "client_ip",
+              "text": "Client",
+              "type": "string"
+            },
+            {
+              "selector": "destination",
+              "text": "Destination",
+              "type": "string"
+            },
+            {
+              "selector": "outbound",
+              "text": "Outbound",
+              "type": "string"
+            },
+            {
+              "selector": "events",
+              "text": "Events",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "rows",
+          "source": "url",
+          "type": "json",
+          "url": "http://127.0.0.1:9101/api/v1/stats/30d/summary?client=${client}&limit=30",
+          "url_options": {
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Last 30d — top destinations (selected client)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "xray-api"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 15,
+      "options": {
+        "footer": {
+          "enablePagination": true,
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "client_ip",
+              "text": "Client",
+              "type": "string"
+            },
+            {
+              "selector": "destination",
+              "text": "Destination:Port",
+              "type": "string"
+            },
+            {
+              "selector": "outbound",
+              "text": "Outbound",
+              "type": "string"
+            },
+            {
+              "selector": "network",
+              "text": "Network",
+              "type": "string"
+            },
+            {
+              "selector": "protocol",
+              "text": "Protocol",
+              "type": "string"
+            },
+            {
+              "selector": "events",
+              "text": "Events",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "rows",
+          "source": "url",
+          "type": "json",
+          "url": "http://127.0.0.1:9101/api/v1/stats/hour?client=${client}&limit=100",
+          "url_options": {
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Last 1h — detail (selected client)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "xray-api"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 16,
+      "options": {
+        "footer": {
+          "enablePagination": true,
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "client_ip",
+              "text": "Client",
+              "type": "string"
+            },
+            {
+              "selector": "destination",
+              "text": "Destination:Port",
+              "type": "string"
+            },
+            {
+              "selector": "outbound",
+              "text": "Outbound",
+              "type": "string"
+            },
+            {
+              "selector": "network",
+              "text": "Network",
+              "type": "string"
+            },
+            {
+              "selector": "protocol",
+              "text": "Protocol",
+              "type": "string"
+            },
+            {
+              "selector": "events",
+              "text": "Events",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "rows",
+          "source": "url",
+          "type": "json",
+          "url": "http://127.0.0.1:9101/api/v1/stats/30d?client=${client}&limit=200",
+          "url_options": {
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Last 30d — detail (selected client)",
+      "type": "table"
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Gateway status",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "xray_stats_api_up",
+          "legendFormat": "API",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "xray_uptime_seconds",
+          "legendFormat": "Uptime",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "xray_restart_total",
+          "legendFormat": "Restarts",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "expr": "up{job=\"xray-routing-exporter\"}",
+          "legendFormat": "Collector",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "expr": "sum(xray_traffic_bytes_total{scope=\"outbound\",tag=\"proxy\",direction=\"downlink\"})",
+          "legendFormat": "Proxy ↑",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "expr": "sum(xray_traffic_bytes_total{scope=\"outbound\",tag=\"proxy\",direction=\"uplink\"})",
+          "legendFormat": "Proxy ↓",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "expr": "sum(xray_traffic_bytes_total{scope=\"outbound\",tag=\"direct\",direction=\"downlink\"})",
+          "legendFormat": "Direct ↑",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "H",
+          "expr": "sum(xray_traffic_bytes_total{scope=\"outbound\",tag=\"direct\",direction=\"uplink\"})",
+          "legendFormat": "Direct ↓",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "vertical",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "API"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "DOWN",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "UP",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Collector"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "DOWN",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "UP",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uptime"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Proxy ↑"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Proxy ↓"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Direct ↑"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Direct ↓"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": "table",
+      "title": "Blocked requests",
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "xray-api"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "url": "http://127.0.0.1:9101/api/v1/events?client=${client}&outboundTag=block&timestamp=${__timeFrom:date:seconds}&limit=1000",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "events",
+          "parser": "backend",
+          "source": "url"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "date_time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "client_ip"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Client"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "destination"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Destination"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "network"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Network"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "protocol"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Protocol"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "showCount": true,
+          "reducer": [
+            "count"
+          ],
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
+      }
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": [
+    "xray",
+    "gateway",
+    "home-router"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(xray_routing_events_total, client)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Client",
+        "multi": false,
+        "name": "client",
+        "options": [],
+        "query": "label_values(xray_routing_events_total, client)",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Xray Gateway",
+  "uid": "xray-gateway-dashboard",
+  "version": 4
+}

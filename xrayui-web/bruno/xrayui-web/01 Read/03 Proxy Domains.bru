@@ -1,0 +1,28 @@
+meta {
+  name: Proxy Domains
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/proxy-domains
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns HTTP 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("returns the proxy-domain snapshot", function () {
+    const body = res.getBody();
+    expect(body.ok).to.equal(true);
+    expect(body.permanentDomains).to.be.an("array");
+    expect(body.pendingAdditions).to.be.an("array");
+    expect(body.pendingDeletions).to.be.an("array");
+    expect(body.effectiveDomains).to.be.an("array");
+    expect(body.runtime).to.be.an("object");
+    expect(body.consolidationActive).to.be.a("boolean");
+  });
+}

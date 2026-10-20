@@ -1,0 +1,17 @@
+meta {
+  name: Geodata Status
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/settings/geodata
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns HTTP 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

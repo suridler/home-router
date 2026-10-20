@@ -1,0 +1,38 @@
+[Unit]
+Description=Xray Core Helper privileged control plane
+Documentation=file:/usr/local/share/doc/xray-core-helper/README.md
+Wants=network-online.target
+After=network-online.target
+Before=xray.service xray-tproxy-routing.service xrayui-web.service
+
+[Service]
+Type=simple
+User=root
+Group=xray-core-helper
+EnvironmentFile=-/etc/xray-core-helper/helper.env
+ExecStart=/usr/local/sbin/xray-core-helperd -config /etc/xray-core-helper/config.toml
+Restart=on-failure
+RestartSec=3s
+UMask=0027
+RuntimeDirectory=xray-core-helper
+RuntimeDirectoryMode=0750
+StateDirectory=xray-core-helper
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/xray-core-helper-update
+ReadWritePaths=/run/xray-core-helper /var/lib/xray-core-helper /usr/local/etc/xray /usr/local/share/xray /var/log/xray /etc/xray-core-helper /etc/systemd/system /etc/sysctl.d
+
+[Install]
+WantedBy=multi-user.target

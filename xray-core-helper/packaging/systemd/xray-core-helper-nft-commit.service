@@ -1,0 +1,20 @@
+[Unit]
+Description=Commit the helper-owned nftables configuration atomically
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/xray-core-helperd -commit-nftables
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+# Rename requires the parent directory. Only this fixed, non-networked invocation
+# receives it; the long-running daemon never receives writable /etc.
+ReadWritePaths=/etc /var/lib/xray-core-helper/native-write

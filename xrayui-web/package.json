@@ -1,0 +1,18 @@
+{
+  "name": "xrayui-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web UI for a Linux router / Xray gateway, inspired by ASUSWRT Merlin XrayUI.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/status-routing.test.js"
+  },
+  "dependencies": {
+    "alpinejs": "^3.17.4",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2"
+  }
+}

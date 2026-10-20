@@ -1,0 +1,21 @@
+meta {
+  name: Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns HTTP 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("reports xrayui-web", function () {
+    expect(res.getBody().service).to.equal("xrayui-web");
+  });
+}

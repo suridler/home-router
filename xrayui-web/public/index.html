@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XrayUI — управление сетью</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%232563eb%27/%3E%3Ctext x=%2716%27 y=%2723%27 text-anchor=%27middle%27 font-size=%2723%27 fill=%27white%27%3EX%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script defer src="/app.js"></script>
+    <script defer src="/vendor/alpinejs/cdn.min.js"></script>
+  </head>
+  <body>
+    <div class="shell" x-data="routerApp" x-init="init()">
+      <aside class="sidebar">
+        <div class="brand"><div class="brand__mark">X</div><div><strong>XrayUI</strong><small>Управление сетью</small></div></div>
+        <button class="nav-toggle secondary" type="button" x-show="!setupMode" @click="navigationOpen = !navigationOpen" :aria-expanded="navigationOpen" aria-controls="main-navigation">Разделы ☰</button>
+        <nav id="main-navigation" aria-label="Разделы панели" x-show="!setupMode" :class="{ 'is-open': navigationOpen }">
+          <template x-for="group in navigationGroups" :key="group.label"><div class="nav-group">
+            <p class="nav-group__label" x-text="group.label"></p>
+            <template x-for="item in group.items" :key="item[0]">
+              <a :href="`#${item[0]}`" :class="{ active: activeView === item[0] }" :aria-current="activeView === item[0] ? 'page' : null" @click.prevent="navigate(item[0])"><span class="nav-symbol" aria-hidden="true" x-text="item[2]"></span><span x-text="item[1]"></span></a>
+            </template>
+          </div></template>
+        </nav>
+        <div class="sidebar-footer"><span class="connection-dot" :class="{ 'connection-dot--offline': statusStale || !status }"></span><span x-text="statusStale ? 'Нет свежих данных helper' : !status ? 'Ожидаем данные helper' : 'Связь с helper установлена'"></span></div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar"><div><p class="eyebrow">Xray / <span x-text="setupMode ? 'Установка' : viewTitle()"></span></p><h1 x-text="setupMode ? 'Первичная настройка' : viewTitle()">Обзор</h1><p class="page-description" x-text="setupMode ? 'Подключите Xray и подготовьте сеть.' : viewDescription()"></p></div><a class="topbar-link" href="#logs" @click.prevent="navigate('logs')" x-show="!setupMode">Открыть журнал ↗</a></header>
+        <section class="panel full-width helper-update-panel" aria-labelledby="helper-update-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">Комплект helper и веб-панели</p><h2 id="helper-update-title">Обновление системы</h2></div>
+            <span class="badge-status" :class="{ 'badge-status--warning': updateIsRecoverable(), 'badge-status--ok': updateTerminal() }" x-text="updateStateLabel()"></span>
+          </div>
+          <dl class="kv-list">
+            <div><dt>Установленная версия</dt><dd><strong x-text="updateCurrentVersion()"></strong><small x-show="updateCurrentCommit()" x-text="`коммит ${updateCurrentCommit()}`"></small></dd></div>
+            <div><dt>Последняя версия GitHub</dt><dd><strong x-text="updateLatestVersion()"></strong><small x-text="updateCheck?.comparison === 'known' ? 'Сравнение версий доступно' : 'Сравнение может быть недоступно'"></small></dd></div>
+          </dl>
+          <p class="notice" x-text="updateCheckMessage()"></p>
+          <p class="notice notice--warning" x-show="helperUpdate &amp;&amp; !updateControlsEnabled()">Управление обновлениями отключено в настройках helper. Проверка и установка недоступны; журнал операции остаётся доступен для чтения.</p>
+          <p class="notice notice--warning" x-show="updateReadError" role="status"><span x-text="updateDisconnectedMessage()"></span> <button class="secondary" type="button" :disabled="updateLoading" @click="loadUpdateStatus()" x-text="updateLoading ? 'Чтение…' : 'Повторить чтение статуса'"></button></p>
+          <p class="notice notice--warning" x-show="updateError" role="alert" x-text="updateError"></p>
+          <p class="notice" x-show="updateMessage" role="status" x-text="updateMessage"></p>
+          <div class="actions">
+            <button class="secondary" type="button" :disabled="!updateControlsEnabled() || updateChecking || updateActionBusy" @click="checkForUpdate()" x-text="updateChecking ? 'Проверка GitHub…' : 'Проверить обновления'"></button>
+            <button class="primary" type="button" x-show="updatePrimaryButtonVisible()" :disabled="!updateControlsEnabled() || updateActionBusy" @click="updatePrimaryAction()" x-text="updatePrimaryButtonLabel()"></button>
+            <button class="secondary" type="button" x-show="canRetryUpdate()" :disabled="updateActionBusy" @click="retryUpdate()" x-text="updateActionBusy ? 'Выполняется…' : 'Повторить установку'"></button>
+            <button class="danger" type="button" x-show="canRollbackUpdate()" :disabled="updateActionBusy" @click="rollbackUpdate()" x-text="updateActionBusy ? 'Выполняется…' : 'Откатить предыдущий комплект'"></button>
+          </div>
+          <p class="notice" x-show="updateIsRecoverable()" x-text="updateRecoveryMessage()"></p>
+          <p class="notice notice--warning" x-show="updateIsRecoverable() &amp;&amp; updateOperation()?.snapshotReady !== true">Снимок для отката не готов; доступен только повтор установки выбранной версии.</p>
+          <details class="technical-details" x-show="updateOperation()">
+            <summary>Журнал операции обновления</summary>
+            <p><span x-text="updateOperationDetail()"></span></p>
+            <p class="notice">Состояние операции принадлежит helper и восстанавливается после перезапуска helper или панели. Потеря HTTP-ответа не запускает установку или откат повторно.</p>
+          </details>
+        </section>
+        <section class="notice notice--warning" x-cloak x-show="requestError" role="alert"><span x-text="requestError"></span><button class="text-button" @click="requestError = ''">Закрыть</button></section>
+        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.rebootRequired" role="alert" aria-live="assertive">
+          <div><strong>ТРЕБУЕТСЯ ПЕРЕЗАГРУЗКА СЕРВЕРА</strong>
+          <p>Файлы nftables, sysctl и systemd восстановлены из одной операции, но их рабочие эффекты НЕ восстановлены. Перезагрузите сервер вручную. Автоматической перезагрузки не будет.</p>
+          <p>Перезапуск helper или панели не заменяет перезагрузку сервера.</p>
+          <code>sudo systemctl reboot</code></div>
+        </section>
+        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.recoveryRequired" role="alert" aria-live="assertive">
+          <div><strong>ВОССТАНОВЛЕНИЕ НЕ ЗАВЕРШЕНО</strong>
+          <p>Не все файлы подтверждены как восстановленные. Повторите восстановление до перезагрузки. Изменения заблокированы. При отсутствии полной исторической копии требуется ручное восстановление оператором.</p>
+          <button class="secondary" :disabled="Boolean(pendingAction)" @click="resolveSafeApply('rollback')">Повторить восстановление файлов</button></div>
+        </section>
+        <section class="notice notice--warning" x-cloak x-show="!setupMode &amp;&amp; (statusStale || safeApplyError || !safeApplyKnown)" role="status">
+          <span x-text="mutationBlockedReason()"></span><button class="secondary" :disabled="loading.status || safeApplyLoading" @click="loadStatus(); loadSafeApply()">Повторить проверку</button>
+        </section>
+        <section class="safe-apply-banner" x-cloak x-show="!setupMode &amp;&amp; safeApply &amp;&amp; !safeApply.rebootRequired &amp;&amp; !safeApply.recoveryRequired" role="alert" aria-live="polite">
+          <div><strong>Настройки применены временно</strong><p><span x-text="templateLabel(safeApply?.templateId)"></span> · до отката: <strong x-text="safeApplySeconds()"></strong> с</p><p>Проверьте соединение с сервером. Затем подтвердите настройки или выполните откат. При откате сетевых настроек потребуется ручная перезагрузка.</p></div>
+          <div class="safe-apply-probe"><p x-show="networkProbes.after?.transactionId === safeApply?.transactionId" x-text="networkProbeSummary(networkProbes.after)"></p><p x-show="networkProbeMessage" x-text="networkProbeMessage"></p><p>Проверка сайта выполняется с сервера. LAN forwarding требует отдельного клиента. Неуспех проверки не запрещает сохранение настроек.</p><button class="secondary" :disabled="networkProbeLoading || safeApplySeconds() === 0" @click="runNetworkProbe('after', safeApply.transactionId)" x-text="networkProbeLoading ? 'Проверка…' : 'Повторить проверку сети'"></button></div>
+          <div class="actions"><button class="primary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError) || safeApplySeconds() === 0" @click="resolveSafeApply('confirm')">Сохранить настройки</button><button class="secondary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError)" @click="resolveSafeApply('rollback')">Откатить</button><button class="secondary" @click="navigate('network')">Проверить соединение →</button></div>
+        </section>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; actionMessage" x-text="actionMessage" role="status"></p>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; templateMessage" x-text="templateMessage" role="status"></p>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; status &amp;&amp; !status.controlEnabled" x-text="mutationBlockedReason()"></p>
+        <section class="view" x-cloak x-show="setupMode"><section class="panel full-width">
+          <p class="eyebrow">Начальная настройка</p><h2>Подготовка сервера</h2>
+          <p>Выполните настройку в консоли сервера:</p>
+          <code>sudo xray-core-helper setup</code>
+          <p class="notice">Пошаговый диалог остановит helper и панель на время настройки. После завершения служба запустится снова; обновите эту страницу.</p>
+          <p class="notice" x-show="setupRecoveryRequired">Предыдущая настройка требует восстановления. Откройте тот же диалог в консоли.</p>
+        </section></section>
+
+        <section class="view" x-show="!setupMode &amp;&amp; activeView === 'status'">
+          <div class="overview-top-row">
+          <section class="gateway-summary" :class="statusStale ? 'state--unknown' : stateClass(status?.dashboard?.state)" aria-labelledby="gateway-summary-title">
+            <div class="section-heading"><div><p class="eyebrow">Общее состояние шлюза</p><h2 id="gateway-summary-title" x-text="dashboardTitle()"></h2></div><button class="secondary" :disabled="loading.status" @click="loadStatus()" x-text="loading.status ? 'Обновление…' : 'Обновить состояние'"></button></div>
+            <p class="notice" x-text="dashboardDescription()"></p>
+            <small class="updated-at" x-text="statusUpdatedAt ? `Последние полученные данные: ${formatDate(statusUpdatedAt)}` : 'Ожидаем данные helper'"></small>
+            <div class="gateway-geodata">
+              <div><span class="eyebrow">Геобазы · последнее обновление</span><strong x-text="status?.geodata?.health?.lastUpdatedAt ? formatDate(status.geodata.health.lastUpdatedAt) : 'Нет данных о загрузке'"></strong><small x-show="statusStale">Сохранённые данные; связь с helper потеряна</small></div>
+              <div class="actions"><button class="secondary" :disabled="!geodata?.installed || !canMutate()" @click="updateGeodata()" x-text="pendingAction === 'geodata-update' ? 'Обновление…' : 'Обновить геобазы'"></button><button class="secondary" @click="navigate('geodata')">Настроить</button></div>
+            </div>
+            <p class="notice" role="status" aria-live="polite" x-show="geodataMessage" x-text="geodataMessage"></p>
+            <details class="gateway-checks"><summary>Helper, Xray, сеть и конфигурация</summary>
+              <ul class="gateway-checks__list"><template x-for="component in status?.dashboard?.components || []" :key="component.key"><li>
+                <button class="text-button" @click="openComponent(component.key)" x-text="component.title"></button>
+                <span :class="statusStale ? 'state--unknown' : stateClass(component.state)" x-text="statusStale ? 'Устаревшие данные' : stateLabel(component.state)"></span>
+                <small x-text="component.label"></small>
+              </li></template></ul>
+            </details>
+          </section>
+          <section class="panel status-proxy-domains" aria-labelledby="status-proxy-domains-title">
+            <div class="section-heading">
+              <div><p class="eyebrow">Динамический список</p><h3 id="status-proxy-domains-title">Домены и IPv4</h3></div>
+              <a class="status-proxy-domains__link" href="#routing" @click.prevent="navigate('routing')">Полный список маршрутизации →</a>
+            </div>
+            <p class="notice" x-show="status?.proxyState === 'direct-placeholder'">Прокси сейчас не настроен и выходит напрямую. Домены и IPv4 можно добавлять: они сохранятся в динамическом списке, но прямой выход не изменится.</p>
+            <form class="status-proxy-domain-form" @submit.prevent="addProxyDomain()">
+              <label for="status-proxy-domain"><span>Домен или IPv4</span><input id="status-proxy-domain" name="domain" type="text" x-model.trim="proxyDomainInput" maxlength="253" required spellcheck="false" autocomplete="off" placeholder="example.com или 192.0.2.1" aria-describedby="status-proxy-domain-hint status-proxy-domain-note" /><small id="status-proxy-domain-hint">Например: example.com или 192.0.2.1. IPv6 и CIDR не поддерживаются.</small></label>
+              <button class="primary" type="submit" :disabled="!canMutate() || setupMode || !proxyDomainInput.trim()" x-text="pendingAction === 'proxy-domain-add' ? 'Добавление…' : 'Добавить'"></button>
+            </form>
+            <p class="notice" id="status-proxy-domain-note" role="status" aria-live="polite" x-show="proxyDomainMessage" x-text="proxyDomainMessage"></p>
+            <p class="notice notice--warning" role="status" aria-live="polite" x-show="proxyDomainsStale" x-text="proxyDomainStaleMessage()"></p>
+            <p class="status-proxy-domains__summary" x-show="proxyDomains" x-text="`Записей: ${proxyDomains?.effectiveDomains?.length || 0} · Ожидают удаления: ${proxyDomains?.pendingDeletions?.length || 0}`"></p>
+          </section>
+          </div>
+          <p class="notice" x-show="configTestMessage" x-text="configTestMessage"></p>
+          <div class="overview-row">
+            <template x-for="metric in [{key: 'in', title: 'Приём', symbol: '↓'}, {key: 'out', title: 'Передача', symbol: '↑'}]" :key="metric.key">
+            <section class="panel overview-rate"><div class="section-heading"><h3><span aria-hidden="true" x-text="metric.symbol"></span> <span x-text="metric.title"></span></h3><span class="rate-value" x-text="status &amp;&amp; !statusStale &amp;&amp; !status.trafficError &amp;&amp; status.trafficRates ? formatRate(status.trafficRates[metric.key]) : '—'"></span></div>
+              <div class="rate-chart" x-show="status &amp;&amp; !statusStale &amp;&amp; !status.trafficError &amp;&amp; status.trafficRates">
+                <svg x-show="trafficSamples.length > 1" viewBox="0 0 300 100" role="img" :aria-label="`${metric.title}: скорость трафика`"><line x1="0" y1="90" x2="300" y2="90" class="traffic-chart__baseline"></line><polyline :points="trafficPoints(metric.key, 300, 90, 75)" class="traffic-chart__line" :class="metric.key === 'in' ? 'traffic-chart__line--in' : 'traffic-chart__line--out'"></polyline></svg>
+                <p class="notice" x-show="trafficSamples.length &lt; 2">Накопление данных…</p>
+              </div>
+              <div class="rate-empty" x-show="!status || statusStale || status.trafficError || !status.trafficRates"><strong>Нет данных о трафике</strong><span x-text="trafficStatusLabel()"></span></div>
+              <small class="rate-caption">Трафик Xray · exporter · текущая сессия</small>
+            </section>
+          </template>
+          </div>
+          <section class="panel full-width" aria-labelledby="home-events-title">
+            <div class="section-heading"><h3 id="home-events-title">Журнал Xray</h3><button class="secondary" @click="openComponent('errors')">Открыть полный журнал</button></div>
+            <div class="recent-events__filters" role="group" aria-label="Показать записи Xray">
+              <button type="button" class="secondary recent-events__filter" :class="{ active: homeEventFilter === 'error' }" :aria-pressed="homeEventFilter === 'error'" @click="selectHomeEventFilter('error')">Ошибки</button>
+              <button type="button" class="secondary recent-events__filter" :class="{ active: homeEventFilter === 'all' }" :aria-pressed="homeEventFilter === 'all'" @click="selectHomeEventFilter('all')">Все события</button>
+              <button type="button" class="secondary recent-events__filter" :class="{ active: homeEventFilter === 'warning' }" :aria-pressed="homeEventFilter === 'warning'" @click="selectHomeEventFilter('warning')">Предупреждения</button>
+              <button type="button" class="secondary recent-events__filter" :class="{ active: homeEventFilter === 'info' }" :aria-pressed="homeEventFilter === 'info'" @click="selectHomeEventFilter('info')">Информация</button>
+            </div>
+            <div x-show="homeEventFilter === 'error'">
+              <p class="notice">Пять последних ошибок из 100 сохранённых helper. Одинаковые сообщения показаны отдельно.</p>
+              <p class="notice" x-text="errorHistoryStatus()"></p>
+              <p class="notice" x-show="status?.errorHistory?.collectedAt &amp;&amp; !status?.errorHistory?.unavailable &amp;&amp; !(status?.errorHistory?.errors || []).length">В сохранённой истории ошибок нет.</p>
+              <ul class="recent-errors"><template x-for="event in status?.errorHistory?.errors || []" :key="event.id"><li class="recent-errors__item recent-errors__item--error"><time x-text="formatDate(event.time || event.observedAt)"></time><small x-text="event.time ? event.source : `${event.source} · время получения, время ошибки неизвестно`"></small><code x-text="event.message"></code></li></template></ul>
+            </div>
+            <div x-show="homeEventFilter !== 'error'">
+              <p class="notice">Последние восемь записей выбранного уровня из текущего журнала. Обновляются каждые 10 секунд, пока открыт этот экран.</p>
+              <p class="notice" x-show="homeEventLoading">Обновление событий…</p>
+              <p class="notice" :class="homeEventError ? 'notice--warning' : ''" x-show="!homeEventLoading &amp;&amp; (homeEventError || homeEventUpdatedAt)" x-text="homeEventStatus()"></p>
+              <p class="notice" x-show="homeEventUpdatedAt &amp;&amp; !homeEventLoading &amp;&amp; !homeEventError &amp;&amp; !filteredHomeEvents().length">Нет событий для выбранного фильтра.</p>
+              <ul class="recent-errors" :class="{ 'recent-errors--stale': homeEventStale }"><template x-for="(line, index) in filteredHomeEvents()" :key="index"><li :class="`recent-errors__item recent-errors__item--${logLineSeverity(line)}`"><time x-text="errorTime(line)"></time><code x-text="line"></code></li></template></ul>
+            </div>
+          </section>
+
+        </section>
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'network'">
+          <section class="panel full-width"><h3>Параметры сети</h3>
+            <dl class="kv-list">
+              <div><dt>Helper</dt><dd x-text="status?.dashboard?.installation?.helperVersion || 'Версия недоступна'"></dd></div>
+              <div><dt>Первичная настройка</dt><dd x-text="({completed: 'Завершена', required: 'Требуется', recovery: 'Нужно восстановление'})[status?.dashboard?.installation?.setup] || 'Нет данных'"></dd></div>
+              <div><dt>Подготовленная сеть</dt><dd x-text="status?.dashboard?.installation?.networkPrepared ? `${status.dashboard.installation.interface} · ${status.dashboard.installation.subnet}` : 'Не зафиксирована в setup'"></dd></div>
+              <div><dt>Прокси-сервер</dt><dd x-text="status?.proxyState === 'direct-placeholder' ? 'Не настроен: proxy выходит напрямую' : status?.proxyState === 'configured' ? 'Outbound задан; доступность требует проверки' : 'Не задан'"></dd></div>
+              <div><dt>Сервис TProxy</dt><dd x-text="status?.dashboard?.installation?.tproxyService === 'ok' ? 'Работает' : 'Не подтверждён'"></dd></div>
+            </dl>
+            <details class="technical-details"><summary>О проверках сети</summary><p class="notice">Показаны настройки и локальные проверки helper. Прохождение LAN-трафика проверяется отдельно с клиента.</p></details>
+            <button class="secondary" @click="navigate('templates')">Открыть системные шаблоны →</button>
+          </section>
+
+          <section class="panel full-width"><div class="section-heading"><h3>Доступ в интернет с сервера</h3><button class="secondary" :disabled="networkProbeLoading" @click="runNetworkProbe()" x-text="networkProbeLoading ? 'Проверка…' : 'Проверить шлюз и сайт'"></button></div>
+            <p class="notice">IPv4 DNS, ping шлюза и HTTPS через обычную маршрутизацию сервера. ICMP может блокироваться независимо от HTTPS. LAN forwarding здесь не проверяется.</p>
+            <p x-show="networkProbes.before" x-text="'До включения: ' + networkProbeSummary(networkProbes.before)"></p><p x-show="networkProbes.after" x-text="'После включения: ' + networkProbeSummary(networkProbes.after)"></p><p x-text="networkProbeSummary(networkProbes.latest)"></p>
+            <p class="notice" role="status" aria-live="polite" x-text="networkProbeMessage"></p><button class="text-button" @click="navigate('settings/system')">Настроить сайт и таймаут →</button>
+          </section>
+          <section class="panel full-width"><div class="section-heading"><h3>Проверка соединения</h3>
+            <button class="secondary" :disabled="Boolean(pendingAction)" @click="probeConnectivity()">Запустить диагностику</button></div>
+            <label>Прокси-сервер для проверки TCP (необязательно)<select x-model="connectivityOutbound"><option value="">Без проверки прокси-сервера</option><template x-for="outbound in vlessOutbounds()" :key="outbound.tag"><option :value="outbound.tag" x-text="outbound.tag"></option></template></select></label>
+            <p class="notice" x-text="connectivityMessage || 'Проверяются API Xray и DNS для example.com. Доступность сайта проверяется в блоке выше; LAN forwarding — отдельно с клиента.'"></p>
+            <template x-for="layer in connectivity?.layers || []" :key="layer.name"><p><strong x-text="layer.name"></strong>: <span x-text="layer.status"></span> — <span x-text="layer.scope"></span> <time x-text="formatDate(layer.checkedAt)"></time></p></template>
+            <template x-for="check in connectivity?.routingEvidence || []" :key="check.name"><p><span x-text="check.name"></span>: <span x-text="check.status"></span> (локальные признаки маршрутизации)</p></template>
+          </section>
+
+          <section class="panel full-width"><div class="section-heading"><h3>Управление TProxy</h3><div class="actions">
+
+            <button class="secondary" x-cloak x-show="status && !status.tproxy?.ok" :disabled="!canMutate()" @click="runAction('network-start')">Включить TProxy с подтверждением</button>
+          <button class="secondary" :disabled="!canMutate()" @click="runAction('network-enable')">Автозапуск TProxy</button>
+          </div></div><p class="notice">Включение TProxy требует подтверждения. Автозапуск применяется отдельным действием.</p></section>
+        </section>
+
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'routing'">
+          <section class="panel full-width proxy-domains-panel">
+            <div class="section-heading">
+              <div><p class="eyebrow">Выбор доменов и IPv4 для проксирования</p><h3>Домены и IPv4</h3></div>
+              <div class="actions">
+                <span class="badge-status" :class="proxyDomains?.consolidationActive ? 'badge-status--warning' : ''" x-text="proxyDomainsStale ? 'Данные устарели' : proxyDomains?.runtime?.state === 'consolidating' ? 'Синхронизация списков…' : proxyDomains?.runtime?.state === 'active' ? 'Список доступен' : 'Нет данных о списках'"></span>
+                <button class="secondary" type="button" :disabled="proxyDomainLoading || Boolean(pendingAction) || Boolean(safeApply)" @click="loadProxyDomains" x-text="proxyDomainLoading ? 'Обновление…' : 'Обновить'"></button>
+              </div>
+            </div>
+            <form class="settings-form proxy-domain-form" @submit.prevent="addProxyDomain()">
+              <label><span>Домен или IPv4</span><input type="text" x-model.trim="proxyDomainInput" maxlength="253" required spellcheck="false" autocomplete="off" placeholder="example.com или 192.0.2.1" aria-describedby="routing-proxy-domain-hint" /><small id="routing-proxy-domain-hint">Например: example.com или 192.0.2.1. IPv6 и CIDR не поддерживаются.</small></label>
+              <button class="primary" type="submit" :disabled="!canMutate() || !proxyDomainInput.trim()" x-text="pendingAction === 'proxy-domain-add' ? 'Добавление…' : 'Добавить'"></button>
+            </form>
+            <p class="notice" x-show="proxyDomainLoading">Загрузка записей…</p>
+            <p class="notice" x-show="proxyDomainMessage" x-text="proxyDomainMessage" role="status" aria-live="polite"></p>
+            <p class="notice notice--warning" x-show="proxyDomainsStale" x-text="proxyDomainStaleMessage()" role="status" aria-live="polite"></p>
+            <div class="proxy-domain-columns" x-show="proxyDomains">
+              <section class="proxy-domain-group">
+                <div class="section-heading"><h4>Через прокси</h4><span class="badge-status" x-text="`Записей: ${proxyDomains?.effectiveDomains?.length || 0}`"></span></div>
+                <p class="notice" x-show="!(proxyDomains?.effectiveDomains || []).length">Список записей для прокси пуст.</p>
+                <ul class="kv-list">
+                  <template x-for="domain in proxyDomains?.effectiveDomains || []" :key="domain">
+                    <li><span class="proxy-domain-name"><strong x-text="domain"></strong><small x-text="proxyDomainKind(domain)"></small></span><button class="danger" type="button" :disabled="!canMutate()" :aria-label="`Удалить ${domain} из прокси-маршрутизации`" @click="deleteProxyDomain(domain)" x-text="pendingAction === 'proxy-domain-delete' && proxyDomainPendingName === domain ? 'Удаление…' : 'Удалить'"></button></li>
+                  </template>
+                </ul>
+              </section>
+              <section class="proxy-domain-group">
+                <div class="section-heading"><h4>Ожидают удаления</h4><span class="badge-status" x-text="`Записей: ${proxyDomains?.pendingDeletions?.length || 0}`"></span></div>
+                <p class="notice" x-show="!(proxyDomains?.pendingDeletions || []).length">Нет ожидающих удалений.</p>
+                <ul class="kv-list">
+                  <template x-for="domain in proxyDomains?.pendingDeletions || []" :key="domain">
+                    <li><span class="proxy-domain-name"><strong x-text="domain"></strong><small>Напрямую до объединения списков</small></span><button class="secondary" type="button" :disabled="!canMutate()" :aria-label="`Отменить удаление ${domain}`" @click="addProxyDomain(domain)" x-text="pendingAction === 'proxy-domain-add' ? 'Применение…' : 'Отменить удаление'"></button></li>
+                  </template>
+                </ul>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel full-width routing-panel">
+            <div class="section-heading"><div><p class="eyebrow">Действующая конфигурация Xray</p><h3>Маршрутизация</h3></div><div class="actions"><span class="badge-status" x-text="`Правил: ${status?.routing?.rules?.length || 0}`"></span><button class="primary" :disabled="!canMutate()" @click="newRoutingRule">Добавить правило</button></div></div>
+            <p class="routing-strategy">Domain strategy: <strong x-text="status?.routing?.domainStrategy || 'AsIs (default)'"></strong></p>
+            <p class="notice" x-show="status?.configError" x-text="`Routing summary unavailable: ${status?.configError}`"></p>
+            <p class="notice" x-show="!status?.configError && !(status?.routing?.rules || []).length">Правила маршрутизации не заданы.</p>
+
+            <section class="routing-group" x-show="systemRoutingRules().length">
+              <div class="routing-group__heading"><h4>Системные правила</h4><span x-text="`${systemRoutingRules().length} protected`"></span></div>
+              <div class="routing-list"><template x-for="rule in systemRoutingRules()" :key="rule.index"><details class="routing-row routing-row--system">
+                <summary><span class="routing-rule__order" x-text="rule.index"></span><span class="routing-row__identity"><strong x-text="rule.tag || `Rule ${rule.index}`"></strong><small x-show="rule.description" x-text="rule.description"></small></span><span class="routing-row__conditions" x-text="routingConditionSummary(rule)"></span><strong class="routing-row__target" x-text="routingTargetLabel(rule)"></strong><span class="badge-status">Общие</span></summary>
+                <div class="routing-row__details"><p class="routing-description" x-show="rule.description" x-text="rule.description"></p><dl class="routing-conditions"><template x-for="condition in rule.conditions" :key="condition.key"><div><dt x-text="routingConditionLabel(condition.key)"></dt><dd x-text="condition.value"></dd></div></template></dl><p class="notice notice--warning" x-text="rule.protectionReason"></p></div>
+              </details></template></div>
+            </section>
+
+            <section class="routing-group" x-show="userRoutingRules().length">
+              <div class="routing-group__heading"><h4>Пользовательские правила</h4><span x-text="`${userRoutingRules().length} editable`"></span></div>
+              <div class="routing-list"><template x-for="rule in userRoutingRules()" :key="rule.index"><details class="routing-row">
+                <summary><span class="routing-rule__order" x-text="rule.index"></span><span class="routing-row__identity"><strong x-text="rule.tag || `Rule ${rule.index}`"></strong><small x-show="rule.description" x-text="rule.description"></small></span><span class="routing-row__conditions" x-text="routingConditionSummary(rule)"></span><strong class="routing-row__target" x-text="routingTargetLabel(rule)"></strong><span class="routing-row__buttons"><button class="secondary" :disabled="Boolean(pendingAction) || Boolean(safeApply)" @click.stop.prevent="editRoutingRule(rule)">Изменить</button><button class="secondary routing-more" :class="{ active: routingMenuIndex === rule.index }" :disabled="Boolean(pendingAction) || Boolean(safeApply)" @click.stop.prevent="toggleRoutingMenu(rule.index)" aria-label="More rule actions">⋯</button></span></summary>
+                <div class="routing-row__menu" x-cloak x-show="routingMenuIndex === rule.index"><button :disabled="!canMutate()" @click="cloneRoutingRule(rule)">Дублировать</button><button :disabled="!canMutate() || !canMoveRoutingRule(rule, 'up')" @click="moveRoutingRule(rule, 'up')">Выше</button><button :disabled="!canMutate() || !canMoveRoutingRule(rule, 'down')" @click="moveRoutingRule(rule, 'down')">Ниже</button><button class="danger" :disabled="!canMutate()" @click="removeRoutingRule(rule)">Удалить</button></div>
+                <div class="routing-row__details"><p class="routing-description" x-show="rule.description" x-text="rule.description"></p><dl class="routing-conditions"><template x-for="condition in rule.conditions" :key="condition.key"><div><dt x-text="routingConditionLabel(condition.key)"></dt><dd x-text="condition.value"></dd></div></template><div x-show="!rule.conditions.length"><dt>Условия</dt><dd>Поддерживаемые условия не заданы</dd></div></dl></div>
+              </details></template></div>
+            </section>
+          </section>
+
+          <section class="panel full-width" x-cloak x-show="routingEditor.open"><div class="section-heading"><div><p class="eyebrow" x-text="routingEditor.mode === 'edit' ? `Rule ${routingEditor.id}` : 'New routing rule'"></p><h3 x-text="routingEditor.mode === 'edit' ? 'Edit rule' : routingEditor.mode === 'clone' ? 'Clone rule' : 'Add rule'"></h3></div><button class="secondary" @click="closeRoutingEditor">Отмена</button></div>
+            <form class="settings-form routing-form" @submit.prevent="saveRoutingRule">
+              <label><span>Название</span><input type="text" maxlength="64" required x-model="routingEditor.ruleTag" placeholder="rule-name" /></label>
+              <template x-for="field in routingConditionFields" :key="field.key"><label class="settings-form__stacked"><span x-text="field.label"></span><textarea x-model="routingEditor.conditions[field.key]" :disabled="routingEditor.mode === 'clone'" :placeholder="field.placeholder"></textarea></label></template>
+              <label><span>Тип назначения</span><select x-model="routingEditor.targetType" :disabled="routingEditor.mode === 'clone'" @change="routingEditor.target = ''"><option value="outbound">Подключение</option><option value="balancer">Балансировщик</option></select></label>
+              <label><span>Назначение</span><select required x-model="routingEditor.target" :disabled="routingEditor.mode === 'clone'"><option value="">Выберите назначение</option><template x-for="target in routingTargets()" :key="target"><option :value="target" x-text="target"></option></template></select></label>
+              <label x-show="routingEditor.mode === 'add'"><span>Позиция</span><select x-model.number="routingEditor.position"><template x-for="position in routingPositions()" :key="position.value"><option :value="position.value" x-text="position.label"></option></template></select></label>
+              <label><span>Перезапустить Xray после применения</span><input type="checkbox" x-model="routingEditor.restart" /></label>
+              <div class="routing-preview"><strong>Предпросмотр</strong><span x-text="routingPreview()"></span></div>
+              <div class="actions"><button class="primary" type="submit" :disabled="!canMutate()" x-text="pendingAction === 'routing-save' ? 'Применение…' : 'Применить правило'"></button><button class="secondary" type="button" @click="closeRoutingEditor">Отмена</button></div>
+            </form><p class="notice" x-show="routingMessage" x-text="routingMessage"></p>
+          </section>
+
+          <section class="panel full-width"><div class="section-heading"><div><p class="eyebrow">Действующая конфигурация Xray</p><h3>Балансировщики</h3></div><span class="badge-status" x-text="`Балансировщиков: ${status?.routing?.balancers?.length || 0}`"></span></div>
+            <p class="notice" x-show="!(status?.routing?.balancers || []).length">Балансировщики не настроены.</p>
+            <div class="balancer-grid"><template x-for="(balancer, index) in status?.routing?.balancers || []" :key="balancer.tag || index"><article class="balancer-card"><div class="section-heading"><strong x-text="balancer.tag || `Balancer ${index + 1}`"></strong><span class="badge-status" x-text="balancer.strategy || 'random (по умолчанию)'"></span></div><span class="label">Селекторы подключений</span><div class="routing-selectors"><template x-for="selector in balancer.selector" :key="selector"><code x-text="selector"></code></template><span x-show="!balancer.selector.length">Селекторы не заданы</span></div></article></template></div>
+          </section>
+        </section>
+
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'xray'">          <section class="panel full-width"><div class="section-heading"><h3>Управление Xray</h3><div class="actions">
+            <button class="secondary" :disabled="!canMutate()" @click="runAction('start')">Запустить</button>
+            <button class="secondary" :disabled="!canMutate()" @click="runAction('stop')">Остановить</button>
+            <button class="primary" :disabled="!canMutate()" @click="runAction('restart')" x-text="pendingAction === 'restart' ? 'Перезапуск…' : 'Перезапустить'"></button>
+            <button class="secondary" :disabled="Boolean(pendingAction) || Boolean(safeApply)" @click="testConfig" x-text="pendingAction === 'config-test' ? 'Проверка…' : 'Проверить конфиг'"></button>
+          </div></div>
+          <p class="notice" :class="status?.controlEnabled ? 'notice--ok' : 'notice--warning'" x-text="status?.controlEnabled ? 'Управление включено' : 'Режим просмотра. Для управления включите [web].control_enabled в helper.'"></p>
+          <p class="notice" x-show="configTestMessage" x-text="configTestMessage"></p></section>
+
+<section class="panel full-width"><h3>Сведения о Xray</h3><ul class="kv-list">
+          <template x-for="row in [['Исполняемый файл Xray', `${status?.xrayBinary || '—'} (${status?.xrayBinarySource || '—'})`], ['Xray API', `${status?.xrayApi || '—'} (${status?.xrayApiSource || '—'})`], ['Конфигурация Xray', `${status?.xrayConfig || '—'} (${status?.xrayConfigSource || '—'})`], ['systemd unit', status?.xrayUnit], ['Время работы', status?.uptime]]" :key="row[0]"><li><span x-text="row[0]"></span><strong x-text="row[1]"></strong></li></template>
+        </ul></section><section class="panel full-width"><h3>Входящие подключения</h3><p class="notice" x-show="!status?.ports?.length">Входящие подключения не найдены.</p><div class="inbound-list"><template x-for="(inbound, index) in status?.ports || []" :key="index"><div class="inbound-row"><strong x-text="inbound.tag || 'Без названия'"></strong><span x-text="inbound.protocol || '—'"></span><code x-text="inbound.port || '—'"></code></div></template></div></section></section>
+
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'logs'"><section class="panel full-width"><div class="section-heading"><h3>Журналы</h3><div class="actions">
+          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'error' }" @click="selectedLogKind = 'error'; loadLogs()">Ошибки</button>
+          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'access' }" @click="selectedLogKind = 'access'; loadLogs()">Соединения</button>
+          <button class="secondary" :disabled="loading.logs" @click="loadLogs" x-text="loading.logs ? 'Загрузка…' : 'Обновить'"></button>
+        </div></div><pre class="logs log-viewer" x-text="loading.logs ? 'Загрузка…' : (logs.join('\n') || logMessage || 'Нет записей.')"></pre></section></section>
+
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; ['settings', 'outbounds', 'geodata', 'templates'].includes(activeView)"><div class="tabs" aria-label="Настройки" x-show="activeView === 'settings'">
+          <button class="tab" :class="{ active: activeSettingsTab === 'logs' }" :aria-pressed="activeSettingsTab === 'logs'" @click="navigateSettings('logs')">Журналы</button>
+          <button class="tab" :class="{ active: activeSettingsTab === 'system' }" :aria-pressed="activeSettingsTab === 'system'" @click="navigateSettings('system')">Общие</button>
+        </div>
+          <section class="panel full-width" x-show="activeView === 'settings' &amp;&amp; activeSettingsTab === 'logs'"><h3>Настройки журналирования</h3><form class="settings-form" @submit.prevent="saveLogs" @input="markLogDirty">
+            <label><span>Журнал соединений</span><select x-model="logDraft.access.mode"><option value="file">Файл</option><option value="journal">Системный журнал</option><option value="none">Отключён</option></select></label>
+            <label x-show="logDraft.access.mode === 'file'"><span>Путь журнала соединений</span><input type="text" x-model="logDraft.access.path" placeholder="/var/log/xray/access.log" /></label>
+            <label><span>Журнал ошибок</span><select x-model="logDraft.error.mode"><option value="file">Файл</option><option value="journal">Системный журнал</option><option value="none">Отключён</option></select></label>
+            <label x-show="logDraft.error.mode === 'file'"><span>Путь журнала ошибок</span><input type="text" x-model="logDraft.error.path" placeholder="/var/log/xray/error.log" /></label>
+            <label><span>Уровень журналирования</span><select x-model="logDraft.loglevel"><option value="debug">debug</option><option value="info">info</option><option value="warning">warning</option><option value="error">error</option><option value="none">Отключён</option></select></label>
+            <label><span>Журнал DNS</span><input type="checkbox" x-model="logDraft.dnsLog" /></label><label><span>Ротация файлов журналов</span><select x-model="logDraft.rotationChange"><option value="keep">Сохранить текущую настройку</option><option value="enable">Включить</option><option value="disable">Выключить</option></select></label><label><span>Перезапустить Xray после применения</span><input type="checkbox" x-model="logDraft.restart" /></label>
+            <button class="primary" :disabled="!canMutate()" type="submit" x-text="pendingAction === 'logs-save' ? 'Сохранение…' : 'Сохранить журналы'"></button>
+          </form><p class="notice" x-show="settingsMessage" x-text="settingsMessage"></p></section>
+          <p class="notice" x-show="activeView === 'outbounds' &amp;&amp; outboundMessage" x-text="outboundMessage" role="status"></p>
+          <section class="panel full-width" x-cloak x-show="activeView === 'outbounds'"><h3>Изменить подключение VLESS</h3><p class="notice">Меняются параметры выбранного VLESS-подключения. Название, исходящая марка и настройки TProxy сохраняются.</p><form class="settings-form" @submit.prevent="previewVless">
+            <label><span>Подключение VLESS</span><select x-model="vlessImport.tag" :disabled="Boolean(pendingAction)" @change="vlessImport.preview = null" required><template x-for="outbound in vlessOutbounds()" :key="outbound.tag"><option :value="outbound.tag" x-text="outbound.tag"></option></template></select></label>
+            <label class="settings-form__stacked"><span>Ссылка VLESS</span><textarea x-model.trim="vlessImport.uri" :disabled="Boolean(pendingAction)" @input="vlessImport.preview = null" required spellcheck="false" placeholder="vless://UUID@example.com:443?type=xhttp&amp;security=reality…"></textarea></label>
+            <label><span>Перезапустить Xray после применения</span><input type="checkbox" x-model="vlessImport.restart" /></label><div class="actions"><button class="secondary" :disabled="!vlessImport.tag || !vlessImport.uri || Boolean(pendingAction) || Boolean(safeApply)" type="submit" x-text="pendingAction === 'vless-preview' ? 'Проверка…' : 'Проверить ссылку'"></button><button class="primary" :disabled="!canMutate() || !vlessImport.preview || vlessImport.preview.unsupportedParameters?.length" type="button" @click="importVless" x-text="pendingAction === 'vless-import' ? 'Применение…' : 'Применить подключение'"></button></div>
+          </form><template x-if="vlessImport.preview"><ul class="kv-list import-preview"><li><span>Сервер</span><strong x-text="`${vlessImport.preview.address}:${vlessImport.preview.port}`"></strong></li><li><span>Транспорт</span><strong x-text="vlessImport.preview.transport"></strong></li><li><span>Защита</span><strong x-text="vlessImport.preview.security"></strong></li><li><span>Поток (flow)</span><strong x-text="vlessImport.preview.flow"></strong></li><li><span>Имя сервера (SNI)</span><strong x-text="vlessImport.preview.serverName"></strong></li></ul></template><p class="notice" x-show="vlessMessage" x-text="vlessMessage"></p></section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'outbounds'"><h3>Добавить подключение VLESS</h3><p class="notice">Исходящая марка назначается автоматически. Для направления трафика добавьте правило маршрутизации.</p><form class="settings-form" @submit.prevent="previewNewVless">
+            <label><span>Название подключения (tag)</span><input type="text" x-model.trim="newVless.tag" :disabled="Boolean(pendingAction)" @input="newVless.preview = null" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" placeholder="proxy-backup" /></label>
+            <label class="settings-form__stacked"><span>Ссылка VLESS</span><textarea x-model.trim="newVless.uri" :disabled="Boolean(pendingAction)" @input="newVless.preview = null" required spellcheck="false" placeholder="vless://UUID@example.com:443?type=xhttp&amp;security=reality…"></textarea></label>
+            <label><span>Перезапустить Xray после применения</span><input type="checkbox" x-model="newVless.restart" /></label><div class="actions"><button class="secondary" :disabled="!newVless.tag || !newVless.uri || Boolean(pendingAction) || Boolean(safeApply)" type="submit" x-text="pendingAction === 'vless-add-preview' ? 'Проверка…' : 'Проверить новое подключение'"></button><button class="primary" :disabled="!canMutate() || !newVless.preview || newVless.preview.unsupportedParameters?.length" type="button" @click="addVless" x-text="pendingAction === 'vless-add' ? 'Добавление…' : 'Добавить подключение'"></button></div>
+          </form><template x-if="newVless.preview"><ul class="kv-list import-preview"><li><span>Название (tag)</span><strong x-text="newVless.preview.outboundTag"></strong></li><li><span>Сервер</span><strong x-text="`${newVless.preview.address}:${newVless.preview.port}`"></strong></li><li><span>Транспорт</span><strong x-text="newVless.preview.transport"></strong></li><li><span>Защита</span><strong x-text="newVless.preview.security"></strong></li></ul></template></section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'outbounds'"><h3>Удалить подключение</h3><p class="notice">Перед удалением проверяются ссылки в маршрутах и балансировщиках. Обязательные для шлюза подключения защищены.</p><form class="settings-form" @submit.prevent="checkOutboundReferences">
+            <label><span>Подключение</span><select x-model="outboundRemoval.tag" :disabled="Boolean(pendingAction)" @change="outboundRemoval.references = null" required><template x-for="outbound in allOutbounds()" :key="outbound.tag"><option :value="outbound.tag" x-text="`${outbound.tag} (${outbound.protocol})`"></option></template></select></label>
+            <label><span>Перезапустить Xray после применения</span><input type="checkbox" x-model="outboundRemoval.restart" /></label><div class="actions"><button class="secondary" :disabled="!outboundRemoval.tag || Boolean(pendingAction) || Boolean(safeApply)" type="submit" x-text="pendingAction === 'outbound-reference-check' ? 'Проверка…' : 'Проверить использование в маршрутах'"></button><button class="danger" :disabled="!canMutate() || !outboundRemoval.references || outboundRemoval.references.protected || outboundRemoval.references.references?.length" type="button" @click="deleteOutbound" x-text="pendingAction === 'outbound-delete' ? 'Удаление…' : 'Удалить подключение'"></button></div>
+          </form><template x-if="outboundRemoval.references?.references?.length"><ul class="kv-list import-preview"><template x-for="reference in outboundRemoval.references.references" :key="reference.path"><li><span x-text="reference.label"></span><strong x-text="reference.path"></strong></li></template></ul></template></section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'geodata'"><div class="section-heading"><h3>Геоданные</h3>            <button class="secondary" :disabled="!geodata?.installed || !canMutate()" @click="updateGeodata" x-text="pendingAction === 'geodata-update' ? 'Обновление…' : 'Обновить геоданные'"></button></div><form class="settings-form" @submit.prevent="saveGeodata" @input="markGeodataDirty">
+            <label><span>URL GeoSite</span><input type="url" required x-model="geodataDraft.geositeUrl" /></label><label><span>URL контрольной суммы GeoSite</span><input type="url" required x-model="geodataDraft.geositeSha256Url" /></label><label><span>URL GeoIP</span><input type="url" required x-model="geodataDraft.geoipUrl" /></label><label><span>URL контрольной суммы GeoIP</span><input type="url" required x-model="geodataDraft.geoipSha256Url" /></label>
+            <button class="primary" :disabled="!canMutate()" type="submit" x-text="pendingAction === 'geodata-save' ? 'Сохранение…' : 'Сохранить геоданные'"></button>
+          </form><p class="notice" x-show="geodataMessage" x-text="geodataMessage"></p></section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'templates'">
+            <div class="section-heading"><div><p class="eyebrow">Системные конфигурации</p><h3>Системные шаблоны</h3></div><button class="secondary" :disabled="templatesLoading || Boolean(pendingAction)" @click="loadTemplates(true)" x-text="templatesLoading ? 'Обновление…' : 'Обновить состояние'"></button></div>
+            <p class="notice">«Принять системный файл» обновляет рабочий шаблон по системе. «Применить шаблон» переносит шаблон в систему. Действия доступны при наличии различий.</p>
+            <div class="template-table" role="table" aria-label="Состояние системных шаблонов"><template x-for="row in templates" :key="row.templateId"><div class="template-row" role="row">
+              <strong x-text="templateLabel(row.templateId)"></strong><span class="badge-status" :class="row.state === 'synchronized' ? 'badge-status--ok' : 'badge-status--warning'" x-text="templateStateLabel(row.state)"></span>
+              <div class="actions" x-show="row.state === 'different'"><button class="secondary" :disabled="!canMutate()" @click="acceptSystemSettings(row)" x-text="pendingAction === `accept-system-${row.templateId}` ? 'Принятие…' : 'Принять системный файл'"></button><button class="primary" :disabled="!canMutate()" @click="applyTemplateSettings(row)" x-text="pendingAction === `apply-template-${row.templateId}` ? 'Проверка…' : 'Применить шаблон'"></button></div>
+
+            </div></template></div>
+            <p class="notice" x-show="!templates.length || templateMessage" x-text="templateMessage || 'Состояние шаблонов недоступно.'"></p>
+          </section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'settings' &amp;&amp; activeSettingsTab === 'system'"><h3>Настройки helper</h3><form class="settings-form" @submit.prevent="saveSystemSettings"><label><span>Число резервных копий на шаблон</span><input type="number" min="1" max="100" required x-model.number="systemSettings.backup.retainPerTemplate" /></label><label><span>URL проверки сети (HTTPS)</span><input type="url" required x-model.trim="systemSettings.connectivity.url" /></label><label><span>Ожидаемый HTTP-код</span><input type="number" min="200" max="299" required x-model.number="systemSettings.connectivity.expectedStatus" /></label><label><span>Таймаут проверки, секунд</span><input type="number" min="5" max="30" required x-model.number="systemSettings.connectivity.timeoutSeconds" /></label><button class="primary" type="submit" :disabled="!canMutate()" x-text="pendingAction === 'system-settings-save' ? 'Сохранение…' : 'Сохранить настройки'"></button></form><p class="notice">От 1 до 100. По умолчанию — 10.</p><p class="notice" x-show="settingsMessage" x-text="settingsMessage"></p></section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

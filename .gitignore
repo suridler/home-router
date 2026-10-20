@@ -1,0 +1,31 @@
+# Generated artifacts
+__pycache__/
+*.py[cod]
+*Zone.Identifier
+/xray-routing-exporter/xray-routing-exporter
+
+# Runtime databases and journals.
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
+**/*.sqlite-journal
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.db-journal
+
+# Runtime sockets and generated recovery copies.
+**/*.sock
+**/*.bak
+**/*.bak.*
+**/*.backup
+**/*.backup.*
+
+# Local configuration and secret material.
+/.codex/config.toml
+**/.env
+**/.env.local
+**/*.secret
+**/*.key
+**/*.pem
+xray-core-helper/config.toml

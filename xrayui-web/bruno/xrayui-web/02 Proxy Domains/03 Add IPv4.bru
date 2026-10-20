@@ -1,0 +1,35 @@
+meta {
+  name: Add IPv4
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/proxy-domains
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "domain": "{{ipv4}}"
+  }
+}
+
+tests {
+  test("adds the requested IPv4 through the domain field", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().ok).to.equal(true);
+    expect(res.getBody().domain).to.equal(bru.getEnvVar("ipv4"));
+    expect(res.getBody().applied).to.be.a("boolean");
+  });
+
+  test("returns the updated snapshot", function () {
+    expect(res.getBody().snapshot.effectiveDomains).to.include(bru.getEnvVar("ipv4"));
+  });
+}

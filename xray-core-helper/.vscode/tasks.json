@@ -1,0 +1,44 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "helper: test",
+			"type": "process",
+			"command": "go",
+			"args": ["test", "./..."],
+			"group": { "kind": "test", "isDefault": true },
+			"problemMatcher": "$go"
+		},
+		{
+			"label": "helper: test race",
+			"type": "process",
+			"command": "go",
+			"args": ["test", "-race", "./..."],
+			"group": "test",
+			"problemMatcher": "$go"
+		},
+		{
+			"label": "helper: build",
+			"type": "process",
+			"command": "go",
+			"args": ["build", "./cmd/..."],
+			"group": { "kind": "build", "isDefault": true },
+			"problemMatcher": "$go"
+		},
+		{
+			"label": "helper: vet",
+			"type": "process",
+			"command": "go",
+			"args": ["vet", "./..."],
+			"group": "test",
+			"problemMatcher": "$go"
+		},
+		{
+			"label": "helper: format check",
+			"type": "shell",
+			"command": "test -z \"$(gofmt -l ./cmd ./internal)\"",
+			"group": "test",
+			"problemMatcher": []
+		}
+	]
+}

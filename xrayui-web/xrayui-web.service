@@ -1,0 +1,37 @@
+[Unit]
+Description=XrayUI web control for the Linux Xray gateway
+Wants=network-online.target
+After=network-online.target xray-core-helper.service
+
+[Service]
+Type=simple
+User=xrayui-web
+Group=xrayui-web
+SupplementaryGroups=xray-core-helper
+WorkingDirectory=/opt/xrayui-web
+Environment=NODE_ENV=production
+EnvironmentFile=/run/xray-core-helper/web.env
+ExecStart=/usr/bin/node /opt/xrayui-web/server.js
+Restart=on-failure
+RestartSec=3
+UMask=0027
+
+# The web process serves static files and talks to the helper Unix socket. It
+# has no reason to mutate the host filesystem or acquire extra privileges.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

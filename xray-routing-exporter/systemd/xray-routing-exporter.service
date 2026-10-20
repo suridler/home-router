@@ -1,0 +1,35 @@
+[Unit]
+Description=Xray Routing Webhook Collector
+Wants=xray-core-helper.service
+After=network.target
+Before=xray.service
+
+[Service]
+Type=simple
+User=xray
+Group=xray
+SupplementaryGroups=xray-core-helper
+ExecStart=/usr/local/bin/xray-routing-exporter \
+  --socket=/run/xray-routing-exporter/routing-webhook.sock \
+  --http=127.0.0.1:9101 \
+  --db=/var/lib/xray-routing-exporter/routing.db
+
+RuntimeDirectory=xray-routing-exporter
+StateDirectory=xray-routing-exporter
+RuntimeDirectoryMode=0755
+UMask=0027
+
+Restart=on-failure
+RestartSec=2s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/run/xray-routing-exporter /var/lib/xray-routing-exporter
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+meta {
+  name: Delete Domain
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/api/proxy-domains/{{domain}}
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+}
+
+tests {
+  test("deletes or excludes the requested domain", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().ok).to.equal(true);
+    expect(res.getBody().domain).to.equal(bru.getEnvVar("domain"));
+    expect(res.getBody().applied).to.be.a("boolean");
+  });
+
+  test("domain is absent from the effective snapshot", function () {
+    expect(res.getBody().snapshot.effectiveDomains).not.to.include(bru.getEnvVar("domain"));
+  });
+}

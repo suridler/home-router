@@ -1,0 +1,343 @@
+// Installation template: render annotated scalar bindings before Xray validation.
+// Based on the active gateway policy; contains no remote proxy credentials.
+// Placeholder bindings and defaults are documented in ../README.md.
+// Setup must render candidates without modifying this source template.
+{
+  // ЛОГИРОВАНИЕ
+  "log": {
+    // Лог соединений: "none" отключает; пустая строка — stdout; путь — файл.
+    // По умолчанию отключён.
+    // helper:v1 bind access-log type=log-destination source=helper.logging.access-path
+    "access": ${access_log_path},
+    // Лог ошибок: по умолчанию stdout (пустая строка), под systemd — journal.
+    // helper:v1 bind error-log type=log-destination source=helper.logging.error-path
+    "error": ${error_log_path},
+    // На этапе настройки удобно использовать debug.
+    // После завершения диагностики рекомендуется снизить до "warning"
+    // или "error", чтобы не создавать большой объём логов.
+    // helper:v1 bind log-level type=log-level source=helper.logging.level
+    "loglevel": ${log_level},
+    // Запись DNS-запросов по умолчанию отключена.
+    // helper:v1 bind dns-log type=boolean source=helper.logging.dns-log
+    "dnsLog": ${dns_log}
+  },
+  // API доступен только локально для helper и Prometheus exporter.
+  "api": {
+    "tag": "api",
+    // helper:v1 bind api-listen type=loopback-endpoint source=helper.xray-api
+    "listen": ${xray_api},
+    "services": [
+      "ReflectionService",
+      "StatsService",
+      "LoggerService",
+      "HandlerService",
+      "RoutingService"
+    ]
+  },
+  // Включить внутренний сбор статистики Xray.
+  "stats": {},
+  // Считать трафик всех inbound и outbound.
+  "policy": {
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
+    }
+  },
+  // DNS
+  "dns": {
+    "hosts": {
+      // Локальное сопоставление имени DoH-сервера с IP.
+      // Это позволяет избежать зависимости от DNS при обращении к самому DNS-серверу.
+      "common.dot.dns.yandex.net": "77.88.8.8",
+      "cloudflare-dns.com": "1.1.1.1"
+    },
+    "servers": [
+      {
+        // Этот tag используется routing для направления
+        // DNS-запросов через outbound "proxy".
+        "tag": "dns-proxy",
+        // DoH Cloudflare.
+        "address": "https://cloudflare-dns.com/dns-query",
+        // Для этих доменов используется именно этот DNS-сервер.
+        "domains": [
+          "geosite:ru-blocked",
+          "geosite:ru-blocked-all",
+          "geosite:google",
+          "geosite:telegram",
+          // helper:v1 bind dns-user-geosite type=geosite-reference source=helper.user-geosite
+          ${user_geosite_reference}
+        ],
+        // Не использовать Cloudflare для остальных доменов при fallback.
+        "skipFallback": true,
+        // После обращения к Cloudflare не пробовать другие DNS-серверы.
+        "finalQuery": true
+      },
+      {
+        // DoH Яндекса через локальное разрешение имени.
+        "address": "https+local://common.dot.dns.yandex.net/dns-query"
+      },
+      // Локальный системный DNS.
+      "localhost"
+    ],
+
+    // Использовать только IPv4 при DNS-резолвинге.
+    "queryStrategy": "UseIPv4",
+    // Разрешить fallback на следующие DNS-серверы.
+    "disableFallback": false
+  },
+  // INBOUNDS
+  "inbounds": [
+    {
+      // Основной TProxy-вход.
+      "tag": "tproxy-in",
+      // Порт, на который nftables отправляет перехваченный трафик.
+      // helper:v1 bind tproxy-port type=port source=xray.tproxy-port
+      "port": ${tproxy_port},
+      // dokodemo-door позволяет принять соединение и сохранить
+      // исходный адрес назначения при работе с TProxy.
+      "protocol": "dokodemo-door",
+      "settings": {
+        // Перехватываем TCP и UDP.
+        "network": "tcp,udp",
+        // Использовать исходный адрес/порт назначения,
+        // полученный от TProxy.
+        "followRedirect": true
+      },
+      "streamSettings": {
+        "sockopt": {
+          // Включить Linux TProxy.
+          "tproxy": "tproxy"
+        }
+      },
+      "sniffing": {
+        // Определять протокол/домен по содержимому соединения,
+        // когда это возможно.
+        "enabled": true,
+        // Для HTTP/TLS/QUIC использовать извлечённое имя назначения.
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        // Использовать результат sniffing для маршрутизации.
+        "routeOnly": true,
+        // Не ограничиваться только metadata.
+        "metadataOnly": false
+      }
+    },
+    {
+      // DNS-вход для LAN-клиентов.
+      "tag": "dns-in",
+      // Слушаем только LAN-адрес роутера.
+      // helper:v1 bind dns-listen type=ipv4-address source=helper.network.address
+      "listen": ${lan_address},
+      // Стандартный DNS-порт.
+      "port": 53,
+      "protocol": "dokodemo-door",
+      "settings": {
+        // Принимаем DNS как TCP, так и UDP.
+        "network": "tcp,udp",
+        // Адрес назначения для входящего DNS.
+        // Сам запрос затем передаётся внутреннему DNS-out.
+        "address": "1.1.1.1",
+        "port": 53
+      }
+    }
+  ],
+  // ============================================================
+  // OUTBOUNDS
+  // ============================================================
+  "outbounds": [
+    {
+      // Прямое подключение без прокси.
+      "tag": "direct",
+      "protocol": "freedom",
+      "streamSettings": {
+        "sockopt": {
+          // Аналогично proxy — исключаем прямой исходящий трафик Xray из повторного перехвата.
+          // helper:v1 bind egress-direct type=uint32 source=xray.egress-mark
+          "mark": ${egress_mark}
+        }
+      }
+    },
+    {
+      "tag": "proxy",
+      "protocol": "freedom",
+      "streamSettings": {
+        "sockopt": {
+          // helper:v1 bind egress-proxy type=uint32 source=xray.egress-mark
+          "mark": ${egress_mark}
+        }
+      }
+    },
+    {
+      // Блокировка соединения.
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      // Внутренний DNS outbound Xray.
+      "tag": "dns-out",
+      "protocol": "dns",
+      "settings": {
+        "rules": [
+          {
+            "action": "hijack"
+          }
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          // Аналогично proxy — исключаем прямой исходящий трафик Xray из повторного перехвата.
+          // helper:v1 bind egress-dns-out type=uint32 source=xray.egress-mark
+          "mark": ${egress_mark}
+        }
+      }
+    }
+  ],
+  // ROUTING
+  "routing": {
+    // Не выполнять дополнительное DNS-разрешение для выбора маршрута.
+    // Использовать имеющийся IP или домен, включая имя, полученное sniffing.
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        // DNS от LAN-клиентов отправляем во внутренний DNS-out.
+        "type": "field",
+        "inboundTag": [
+          "dns-in"
+        ],
+        "outboundTag": "dns-out"
+      },
+      {
+        // DNS-сервер с tag "dns-proxy" работает через outbound "proxy".
+        "type": "field",
+        "inboundTag": [
+          "dns-proxy"
+        ],
+        "outboundTag": "proxy"
+      },
+      {
+        // Torrent traffic to direct
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "direct",
+        "ruleTag": "direct-torrent"
+      },
+      {
+        // Локальные/private IP отправляем напрямую.
+        "type": "field",
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "direct",
+        "ruleTag": "direct-local"
+      },
+      // Dynamic API overlay is inserted here after system rules; it is not persisted in this file.
+      // Persistent USERLIST follows the overlay, before the remaining policy rules.
+      {
+        "type": "field",
+        "domain": [
+          // helper:v1 bind routing-user-geosite type=geosite-reference source=helper.user-geosite
+          ${user_geosite_reference}
+        ],
+        "outboundTag": "proxy",
+        "ruleTag": "proxy-domains-permanent"
+      },
+      {
+        "type": "field",
+        "ip": [
+          // helper:v1 bind user-geoip type=geoip-reference source=helper.user-geoip
+          ${user_geoip_reference}
+        ],
+        "outboundTag": "proxy",
+        "ruleTag": "proxy-ip-permanent"
+      },
+      {
+        // Реклама — блокировка.
+        "type": "field",
+        "domain": [
+          "geosite:category-ads-all"
+        ],
+        "outboundTag": "block",
+        "ruleTag": "block"
+      },
+      {
+        // Ресурсы, которые должны открываться непосредственно из российской сети.
+        "type": "field",
+        "domain": [
+          "geosite:ru-available-only-inside",
+          "geosite:category-gov-ru"
+        ],
+        "outboundTag": "direct",
+        "ruleTag": "direct-domain-ru-only"
+      },
+      {
+        // Домены, которые должны идти через прокси.
+        "type": "field",
+        "domain": [
+          "geosite:ru-blocked",
+          "geosite:ru-blocked-all",
+          "geosite:google",
+          "geosite:telegram"
+        ],
+        "outboundTag": "proxy",
+        "ruleTag": "proxy-domain-ru-blocked"
+      },
+      {
+        // Домены, которые должны идти через прокси.
+        "type": "field",
+        "domain": [
+          "domain:api.ipify.org",
+          "domain:buymeacoffee.com",
+          "domain:tavily.com",
+          "domain:alador.space",
+          "domain:cdn2cdn.com",
+          "domain:cdn2site.com",
+          "domain:cdn32.lol",
+          "domain:cdntogo.net",
+          "domain:digital-cdn.net",
+          "domain:googleapis.com",
+          "domain:kino.pub",
+          "domain:kinopub.online",
+          "domain:mycdn.video",
+          "domain:pushbr.com",
+          "domain:service-kp.com",
+          "domain:smarttv.zeasn.tv",
+          "domain:srvkp.com",
+          "domain:support-kp.com",
+          "domain:teleos.club",
+          "domain:wp.com"
+        ],
+        "outboundTag": "proxy",
+        "ruleTag": "proxy-domain-ru-blocked-kino"
+      },
+      {
+        // IP-диапазоны, которые должны идти через прокси.
+        "type": "field",
+        "ip": [
+          "168.144.133.96",
+          "geoip:ru-blocked",
+          "geoip:telegram",
+          "geoip:google"
+        ],
+        "outboundTag": "proxy",
+        "ruleTag": "proxy-ip-ru-blocked"
+
+      },
+      {
+        // Российские IP — напрямую.
+        "type": "field",
+        "ip": [
+          "geoip:ru"
+        ],
+        "outboundTag": "direct",
+        "ruleTag": "direct-ip-ru"
+      }
+      // Всё что не попало в правила пойдет через 1 desination
+      // сейчас это "direct"
+    ]
+  }
+}

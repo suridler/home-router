@@ -1,0 +1,28 @@
+meta {
+  name: Delete IPv4
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/api/proxy-domains/{{ipv4}}
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+}
+
+tests {
+  test("deletes or excludes the requested IPv4", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().ok).to.equal(true);
+    expect(res.getBody().domain).to.equal(bru.getEnvVar("ipv4"));
+    expect(res.getBody().applied).to.be.a("boolean");
+  });
+
+  test("IPv4 is absent from the effective snapshot", function () {
+    expect(res.getBody().snapshot.effectiveDomains).not.to.include(bru.getEnvVar("ipv4"));
+  });
+}

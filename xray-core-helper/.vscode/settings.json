@@ -1,0 +1,10 @@
+{
+	"go.formatTool": "gofmt",
+	"go.testFlags": ["-count=1"],
+	"go.testTimeout": "60s",
+	"go.toolsManagement.autoUpdate": false,
+	"files.exclude": {
+		"**/*.sqlite-shm": true,
+		"**/*.sqlite-wal": true
+	}
+}

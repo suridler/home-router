@@ -1,0 +1,35 @@
+meta {
+  name: Add Domain
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/proxy-domains
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "domain": "{{domain}}"
+  }
+}
+
+tests {
+  test("adds the requested domain", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().ok).to.equal(true);
+    expect(res.getBody().domain).to.equal(bru.getEnvVar("domain"));
+    expect(res.getBody().applied).to.be.a("boolean");
+  });
+
+  test("returns the updated snapshot", function () {
+    expect(res.getBody().snapshot.effectiveDomains).to.include(bru.getEnvVar("domain"));
+  });
+}
