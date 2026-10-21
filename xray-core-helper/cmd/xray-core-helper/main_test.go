@@ -339,3 +339,12 @@ func TestGeodataSizeErrorDisplaysSafeLimit(t *testing.T) {
 		t.Fatal(stderr.String())
 	}
 }
+
+func TestGeodataErrorWithOperationPreservesCode(t *testing.T) {
+	err := apiErrorFromResponse(503, []byte(`{"error":{"code":"geodata_xray_routing_failed","message":"SECRET"},"operation":{"id":"example","report":{"activation":{"stage":"routing"}}}}`))
+	var stderr strings.Builder
+	writeRequestError(&stderr, "geodata", err)
+	if !strings.Contains(stderr.String(), "geodata_xray_routing_failed") || strings.Contains(stderr.String(), "SECRET") || strings.Contains(stderr.String(), "api_error") {
+		t.Fatal(stderr.String())
+	}
+}

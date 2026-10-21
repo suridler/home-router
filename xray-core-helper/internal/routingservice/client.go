@@ -102,7 +102,9 @@ func (client *Client) ApplyRouting(ctx context.Context, payload xrayconfig.Routi
 		return errors.New("close temporary Xray routing payload")
 	}
 
-	args := []string{"api", "adrules", "--server=" + client.server, path}
+	// Xray starts its API deadline before loading geodata. Its default three
+	// seconds can expire while building a valid routing payload.
+	args := []string{"api", "adrules", "--server=" + client.server, fmt.Sprintf("--timeout=%d", int(commandTimeout/time.Second)), path}
 	return client.run(ctx, "adrules", args)
 }
 

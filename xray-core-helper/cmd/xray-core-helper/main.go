@@ -578,7 +578,10 @@ func requestJSONWithHeaders(client *http.Client, method, path string, requestBod
 }
 
 func apiErrorFromResponse(status int, payload []byte) error {
-	var response api.ErrorResponse
+	var response struct {
+		api.ErrorResponse
+		Operation json.RawMessage `json:"operation,omitempty"`
+	}
 	if err := decodeStrictJSON(payload, &response); err != nil {
 		return &requestAPIError{status: status, code: "api_error"}
 	}

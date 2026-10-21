@@ -60,11 +60,11 @@ func TestApplyRoutingUsesFixedCommandAndSecureTemporaryPayload(t *testing.T) {
 		if executable != "/usr/local/bin/xray" {
 			t.Fatalf("executable = %q", executable)
 		}
-		if len(args) != 4 || args[0] != "api" || args[1] != "adrules" ||
-			args[2] != "--server=127.0.0.1:10085" {
+		if len(args) != 5 || args[0] != "api" || args[1] != "adrules" ||
+			args[2] != "--server=127.0.0.1:10085" || args[3] != "--timeout=15" {
 			t.Fatalf("arguments = %#v", args)
 		}
-		payloadPath = args[3]
+		payloadPath = args[4]
 		info, err := os.Stat(payloadPath)
 		if err != nil {
 			t.Fatalf("stat payload: %v", err)
@@ -109,7 +109,7 @@ func TestApplyRoutingRemovesTemporaryPayloadAfterCommandFailure(t *testing.T) {
 	client := newTestClient(t, runner)
 	var payloadPath string
 	runner.onCall = func(_ context.Context, _ string, args []string) {
-		payloadPath = args[3]
+		payloadPath = args[4]
 	}
 
 	err := client.ApplyRouting(context.Background(), xrayconfig.RoutingPayload(testPayload))
@@ -216,7 +216,7 @@ func TestApplyRoutingStopsRetriesWhenContextIsCancelled(t *testing.T) {
 	}
 	var payloadPath string
 	runner.onCall = func(_ context.Context, _ string, args []string) {
-		payloadPath = args[3]
+		payloadPath = args[4]
 	}
 
 	err := client.ApplyRouting(ctx, xrayconfig.RoutingPayload(testPayload))
