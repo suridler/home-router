@@ -60,11 +60,11 @@ func TestApplyRoutingUsesFixedCommandAndSecureTemporaryPayload(t *testing.T) {
 		if executable != "/usr/local/bin/xray" {
 			t.Fatalf("executable = %q", executable)
 		}
-		if len(args) != 5 || args[0] != "api" || args[1] != "adrules" ||
-			args[2] != "--server=127.0.0.1:10085" || args[3] != "--timeout=15" {
+		if len(args) != 6 || args[0] != "api" || args[1] != "adrules" ||
+			args[2] != "--server=127.0.0.1:10085" || args[3] != "--timeout=15" || args[4] != "--append" {
 			t.Fatalf("arguments = %#v", args)
 		}
-		payloadPath = args[4]
+		payloadPath = args[5]
 		info, err := os.Stat(payloadPath)
 		if err != nil {
 			t.Fatalf("stat payload: %v", err)
@@ -87,7 +87,7 @@ func TestApplyRoutingUsesFixedCommandAndSecureTemporaryPayload(t *testing.T) {
 		}
 	}
 
-	if err := client.ApplyRouting(context.Background(), xrayconfig.RoutingPayload(testPayload)); err != nil {
+	if err := client.appendRouting(context.Background(), xrayconfig.RoutingPayload(testPayload)); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) != 1 {
@@ -109,18 +109,18 @@ func TestApplyRoutingRemovesTemporaryPayloadAfterCommandFailure(t *testing.T) {
 	client := newTestClient(t, runner)
 	var payloadPath string
 	runner.onCall = func(_ context.Context, _ string, args []string) {
-		payloadPath = args[4]
+		payloadPath = args[5]
 	}
 
-	err := client.ApplyRouting(context.Background(), xrayconfig.RoutingPayload(testPayload))
+	err := client.appendRouting(context.Background(), xrayconfig.RoutingPayload(testPayload))
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("error = %v; want redacted command failure", err)
 	}
 	if _, statErr := os.Stat(payloadPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("temporary payload still exists: stat error = %v", statErr)
 	}
-	if len(runner.calls) != maxAttempts {
-		t.Fatalf("calls = %d; want %d attempts", len(runner.calls), maxAttempts)
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %d; want one append attempt", len(runner.calls))
 	}
 }
 
@@ -167,7 +167,7 @@ func TestApplyRoutingCancellationSkipsCommandAndRemovesPayload(t *testing.T) {
 	runner := &fakeRunner{}
 	client := newTestClient(t, runner)
 
-	err := client.ApplyRouting(ctx, xrayconfig.RoutingPayload(testPayload))
+	err := client.appendRouting(ctx, xrayconfig.RoutingPayload(testPayload))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v; want context.Canceled", err)
 	}
@@ -191,7 +191,7 @@ func TestApplyRoutingPassesContextToCommandRunner(t *testing.T) {
 		cancel()
 	}
 
-	err := client.ApplyRouting(ctx, xrayconfig.RoutingPayload(testPayload))
+	err := client.appendRouting(ctx, xrayconfig.RoutingPayload(testPayload))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v; want context.Canceled", err)
 	}
@@ -200,7 +200,7 @@ func TestApplyRoutingPassesContextToCommandRunner(t *testing.T) {
 	}
 }
 
-func TestApplyRoutingStopsRetriesWhenContextIsCancelled(t *testing.T) {
+func TestListRulesStopsRetriesWhenContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runner := &fakeRunner{
@@ -214,20 +214,13 @@ func TestApplyRoutingStopsRetriesWhenContextIsCancelled(t *testing.T) {
 		cancel()
 		return ctx.Err()
 	}
-	var payloadPath string
-	runner.onCall = func(_ context.Context, _ string, args []string) {
-		payloadPath = args[4]
-	}
 
-	err := client.ApplyRouting(ctx, xrayconfig.RoutingPayload(testPayload))
+	_, err := client.ListRules(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v; want context.Canceled", err)
 	}
 	if len(runner.calls) != 1 {
 		t.Fatalf("calls = %d; want 1 before cancellation", len(runner.calls))
-	}
-	if _, statErr := os.Stat(payloadPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("temporary payload still exists: stat error = %v", statErr)
 	}
 }
 
@@ -239,7 +232,7 @@ func TestRoutingRetriesAreBoundedAndUseFixedDelay(t *testing.T) {
 		delays = append(delays, delay)
 		return nil
 	}
-	if err := client.ApplyRouting(context.Background(), xrayconfig.RoutingPayload(testPayload)); err != nil {
+	if _, err := client.ListRules(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) != maxAttempts {
@@ -250,7 +243,7 @@ func TestRoutingRetriesAreBoundedAndUseFixedDelay(t *testing.T) {
 	}
 	for index, call := range runner.calls {
 		if call.executable != "/usr/local/bin/xray" ||
-			!reflect.DeepEqual(call.args[:3], []string{"api", "adrules", "--server=127.0.0.1:10085"}) {
+			!reflect.DeepEqual(call.args[:3], []string{"api", "lsrules", "--server=127.0.0.1:10085"}) {
 			t.Fatalf("attempt %d has unexpected command: %#v", index+1, call)
 		}
 	}

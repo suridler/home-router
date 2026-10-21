@@ -31,6 +31,8 @@ type Service struct {
 	store  DomainStore
 	reader RoutingReader
 	client RoutingClient
+	// Accessed only while holding the shared mutation coordinator.
+	runtimeDirty bool
 }
 
 func New(store DomainStore, reader RoutingReader, client RoutingClient) (*Service, error) {
@@ -109,7 +111,8 @@ func (service *Service) ApplyWhileLocked(ctx context.Context) error {
 	return nil
 }
 
-func (service *Service) apply(ctx context.Context) error {
+func (service *Service) apply(ctx context.Context) (resultErr error) {
+	defer func() { service.runtimeDirty = resultErr != nil }()
 	snapshot, err := service.store.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("read desired proxy domains: %w", err)
@@ -118,6 +121,15 @@ func (service *Service) apply(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("classify proxy resources: %w", err)
 	}
+	// Deletions from the loaded USERLIST take effect on the next geodata update.
+	// A direct rule appended after permanent rules cannot override that baseline.
+	additions := overlay.Rules[:0]
+	for _, rule := range overlay.Rules {
+		if rule.OutboundTag == "proxy" {
+			additions = append(additions, rule)
+		}
+	}
+	overlay.Rules = additions
 	payload, err := service.reader.RoutingPayload(ctx, overlay)
 	if err != nil {
 		return fmt.Errorf("build proxy-domain routing payload: %w", err)

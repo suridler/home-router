@@ -335,3 +335,32 @@ func TestRuntimeReconcilerHonorsCancelledContext(t *testing.T) {
 		t.Fatalf("identity calls after cancellation = %d; want zero", calls)
 	}
 }
+
+func TestReconcilerRetriesFailedMutationWithoutXrayRestart(t *testing.T) {
+	ctx := context.Background()
+	client := &runtimeClient{}
+	service, _, _ := newService(t, serviceConfig, client)
+	identity := &identityFake{token: "unchanged-runtime"}
+	reconciler, err := NewRuntimeReconciler(service, identity.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := reconciler.Reconcile(ctx); err != nil || !applied {
+		t.Fatalf("initial reconciliation: %v, %v", applied, err)
+	}
+	client.mu.Lock()
+	client.fail = errors.New("temporary API failure")
+	client.mu.Unlock()
+	if err := service.Add(ctx, "retry.example"); err == nil {
+		t.Fatal("expected mutation synchronization failure")
+	}
+	client.mu.Lock()
+	client.fail = nil
+	client.mu.Unlock()
+	if applied, err := reconciler.Reconcile(ctx); err != nil || !applied {
+		t.Fatalf("pending synchronization not retried: %v, %v", applied, err)
+	}
+	if applied, err := reconciler.Reconcile(ctx); err != nil || applied {
+		t.Fatalf("successful synchronization repeated: %v, %v", applied, err)
+	}
+}

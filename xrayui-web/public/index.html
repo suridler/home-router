@@ -220,7 +220,7 @@
                 <p class="notice" x-show="!(proxyDomains?.pendingDeletions || []).length">Нет ожидающих удалений.</p>
                 <ul class="kv-list">
                   <template x-for="domain in proxyDomains?.pendingDeletions || []" :key="domain">
-                    <li><span class="proxy-domain-name"><strong x-text="domain"></strong><small>Напрямую до объединения списков</small></span><button class="secondary" type="button" :disabled="!canMutate()" :aria-label="`Отменить удаление ${domain}`" @click="addProxyDomain(domain)" x-text="pendingAction === 'proxy-domain-add' ? 'Применение…' : 'Отменить удаление'"></button></li>
+                    <li><span class="proxy-domain-name"><strong x-text="domain"></strong><small>Останется в USERLIST до обновления геобаз</small></span><button class="secondary" type="button" :disabled="!canMutate()" :aria-label="`Отменить удаление ${domain}`" @click="addProxyDomain(domain)" x-text="pendingAction === 'proxy-domain-add' ? 'Применение…' : 'Отменить удаление'"></button></li>
                   </template>
                 </ul>
               </section>

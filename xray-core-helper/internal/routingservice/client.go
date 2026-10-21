@@ -65,7 +65,7 @@ func NewClient(binary, server string, runner CommandRunner) (*Client, error) {
 	}, nil
 }
 
-func (client *Client) ApplyRouting(ctx context.Context, payload xrayconfig.RoutingPayload) (resultErr error) {
+func (client *Client) appendRouting(ctx context.Context, payload xrayconfig.RoutingPayload) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("Xray RoutingService adrules canceled: %w", err)
 	}
@@ -102,10 +102,17 @@ func (client *Client) ApplyRouting(ctx context.Context, payload xrayconfig.Routi
 		return errors.New("close temporary Xray routing payload")
 	}
 
-	// Xray starts its API deadline before loading geodata. Its default three
-	// seconds can expire while building a valid routing payload.
-	args := []string{"api", "adrules", "--server=" + client.server, fmt.Sprintf("--timeout=%d", int(commandTimeout/time.Second)), path}
-	return client.run(ctx, "adrules", args)
+	// Send only new resource rules. Never retry append blindly: a lost response
+	// may mean the rules were already installed.
+	args := []string{"api", "adrules", "--server=" + client.server, fmt.Sprintf("--timeout=%d", int(commandTimeout/time.Second)), "--append", path}
+	_, _, err = client.runner.Run(ctx, client.binary, args)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("Xray RoutingService adrules canceled: %w", ctx.Err())
+		}
+		return errors.New("Xray RoutingService adrules failed")
+	}
+	return nil
 }
 
 func (client *Client) ListRules(ctx context.Context) ([]byte, error) {
@@ -150,4 +157,13 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// RemoveRule is idempotent in Xray, including when the tag is already absent.
+func (client *Client) RemoveRule(ctx context.Context, tag string) error {
+	if tag == "" {
+		return errors.New("empty Xray routing rule tag")
+	}
+	return client.run(ctx, "rmrules", []string{"api", "rmrules", "--server=" + client.server,
+		fmt.Sprintf("--timeout=%d", int(commandTimeout/time.Second)), tag})
 }

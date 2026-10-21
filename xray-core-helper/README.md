@@ -55,7 +55,10 @@ sudo /usr/local/bin/xray-core-helper proxy-domain delete 192.0.2.1
 не CLI. Список живёт в той же SQLite-хранилище `desired`/`baseline`; второго
 хранилища и офлайн-записи нет.
 
-Add/delete меняют desired и синхронизируют runtime overlay без рестарта Xray.
+Add/delete меняют desired и синхронизируют отдельные правила ресурсов через
+append/remove, без полной пересборки routing и без рестарта Xray. Правила
+добавляются в конец после статических. Удаление уже загруженной записи USERLIST
+начинает действовать при очередном обновлении геобаз; direct-исключения нет.
 `applied`/`applied:true` подтверждает применение overlay, но не запись в
 `geosite_user.dat`/`geoip_user.dat`: файлы USERLIST обновляются при `geodata update`. Каждый успешно
 загруженный после restart файл обновляет свой baseline; затем восстанавливается overlay. При

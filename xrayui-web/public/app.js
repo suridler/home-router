@@ -341,8 +341,11 @@ document.addEventListener('alpine:init', () => {
     },
     proxyDomainDeletedMessage(result, value) {
       const domain = result?.domain || value;
+      if (result?.applied === true && result?.snapshot?.pendingDeletions?.includes(domain)) {
+        return `Удаление записи ${domain} сохранено; запись останется в USERLIST до следующего обновления геобаз.`;
+      }
       return result?.applied === true
-        ? `Запись ${domain} удалена из прокси-маршрутизации.`
+        ? `Запись ${domain} удалена из динамического списка.`
         : `Удаление записи ${domain} сохранено, но изменения ещё не применены к работающей конфигурации.`;
     },
     async loadSystemSettings() { try { const data = await this.api("/api/settings/system"); this.systemSettings = { backup: { retainPerTemplate: data.backup?.retainPerTemplate || 10 }, connectivity: data.connectivity || this.systemSettings.connectivity }; } catch (error) { this.settingsMessage = error.message; } },

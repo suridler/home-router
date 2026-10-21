@@ -204,8 +204,8 @@ Helper нормализует домен (пробелы, регистр, кон
 
 `list` печатает JSON `desired`, `baseline`, `consolidationActive`. `desired` —
 сохранённое намерение, `baseline` — загруженные Xray ресурсы каждого успешно обновлённого файла USERLIST.
-Удаление baseline-записи оставляет её в baseline и добавляет direct exclusion;
-из USERLIST она исчезает после следующей консолидации. Add/delete меняют desired
+Удаление baseline-записи оставляет её действующей в USERLIST до следующего
+обновления геобаз; немедленного direct exclusion нет. Add/delete меняют desired
 и без рестарта Xray синхронизируют runtime overlay.
 `applied:true` в API и сообщение `applied` в CLI означают применение overlay,
 а не запись в USERLIST. Команда `geodata update` скачивает внешние файлы
@@ -220,11 +220,11 @@ routing reconciler; desired не теряется. Если имя USERLIST из
 запуска Xray. Одна DNS-ссылка для этого недостаточна. Ожидание binding
 не вызывает повторных restart. Старые списки автоматически не импортируются.
 
-Порядок правил: существующие системные правила, dynamic direct exclusions,
-dynamic proxy additions (отдельно домены и IPv4), затем
-`proxy-domains-permanent` с USERLIST и остальные правила. Для IP overlay
-единственное `proxy-ip-permanent` должно оставаться после permanent-правила
-доменов; helper не добавляет недостающее правило автоматически.
+Динамические правила добавляются в конец: существующие статические правила
+имеют приоритет. Каждый домен/IPv4 имеет свой стабильный тег. Повторный apply
+добавляет только отсутствующие правила и удаляет только лишние; статические
+правила и геобазы не пересобираются. Для IP additions по-прежнему требуется
+постоянное правило пользовательского geoip; helper его молча не создаёт.
 
 Если add/delete вернул `domain_runtime_sync_failed`, а apply —
 `domain_runtime_apply_failed`, desired мог сохраниться. Перечитайте список и
@@ -237,7 +237,8 @@ sudo /usr/local/bin/xray-core-helper proxy-domain apply
 ```
 
 Повторный apply строит тот же overlay без дубликатов; внутренний планировщик
-helper раз в 30 с вызывает reconcile через тот же API после нового запуска Xray.
+helper раз в 30 с вызывает reconcile через тот же API после нового запуска Xray
+или неудачного runtime apply.
 Proxy-as-freedom не создаёт туннель. Ввод доступен на первом экране и в маршрутизации.
 
 ## Логи и geodata

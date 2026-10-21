@@ -128,16 +128,17 @@ IPv4, отклоняются до записи и обращения к Xray: HT
 массивы пустым списком и проверяет структуру ответа. `consolidationActive`
 показывает замороженный снимок пары.
 
-Runtime overlay разделён на `dynamic-proxy-domain-exclusions` /
-`dynamic-proxy-ip-exclusions` (direct) и `dynamic-proxy-domains` /
-`dynamic-proxy-ips` (proxy). Исключения идут раньше добавлений; все четыре правила
-размещаются перед `proxy-domains-permanent`, после существующих системных правил.
-Для IP overlay требуется единственное `proxy-ip-permanent` после
-`proxy-domains-permanent`; helper не добавляет недостающее правило автоматически
-и не переписывает JSONC ради этого. `desired - baseline` даёт additions,
-`baseline - desired` — exclusions. Удаление baseline-записи оставляет её в
-baseline и создаёт direct exclusion; из USERLIST она удаляется только следующей
-консолидацией.
+Runtime additions — `desired - baseline`. Каждый домен/IPv4 имеет отдельный
+стабильный тег `helper-proxy-resource-<sha256>` и добавляется в конец через
+`adrules --append`; лишние owned tags удаляются через `rmrules`. Статические
+правила имеют приоритет и не пересобираются. Непоменявшиеся ресурсы не удаляются
+и не добавляются заново. Для IP additions требуется единственное постоянное
+`proxy-ip-permanent` после `proxy-domains-permanent`; JSONC не исправляется
+автоматически. Удаление baseline-записи сохраняется в desired, но продолжает
+действовать через USERLIST до следующего обновления баз: direct exclusions нет.
+Ошибки частичной синхронизации не откатывают desired; следующий apply сравнивает
+фактические теги и завершает работу без дубликатов. Повтор append после потерянного
+ответа не выполняется вслепую: сначала проверяется наличие новых тегов.
 
 Повтор apply строит тот же overlay без дубликатов. `POST
 /v1/proxy-domains/reconcile` с пустым body или `{}` проверяет текущий systemd
@@ -149,7 +150,8 @@ InvocationID Xray и восстанавливает overlay только пос�
 запроса. CLI: `proxy-domain reconcile`. Операция проходит общий coordinator и
 recovery gate; во время consolidation overlay не применяется. Сбой
 восстановления возвращает HTTP 503 `domain_runtime_reconcile_failed` и
-повторяется следующим тиком.
+повторяется следующим тиком. Неудачный runtime apply также повторяется
+при прежнем InvocationID.
 
 `geodata update` собирает домены в `[geodata].user_geosite` (default
 `geosite_user.dat`, USERLIST), IPv4 — в `[geodata].user_geoip` (default

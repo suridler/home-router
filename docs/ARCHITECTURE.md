@@ -174,16 +174,18 @@ Helper/web не заменяет reboot. Pending evidence защищено от 
 
 ## Динамические домены и geodata
 
-`desired - baseline` формирует runtime proxy additions, `baseline - desired` —
-direct exclusions. Overlay применяется через RoutingService без рестарта.
-При сбое runtime desired может уже сохраниться; повторный apply согласует его.
-Точка вставки — постоянное правило `proxy-domains-permanent`. Порядок:
-системные правила, dynamic direct exclusions, dynamic proxy additions,
-пользовательский geosite, остальные пользовательские правила. Динамические
-правила формируются в runtime; пустые заглушки в конфиге не нужны.
+`desired - baseline` формирует runtime proxy additions. Каждый домен/IPv4
+получает стабильный ruleTag; RoutingService добавляет отсутствующие правила
+в конец (`adrules --append`) и удаляет лишние по тегам (`rmrules`). Остальные
+правила и обработчики геобаз не пересобираются. Статические правила имеют
+приоритет над динамическими; helper не меняет их порядок.
+Удаление ресурса из загруженного USERLIST отражается в desired сразу, но
+действует после очередной пересборки баз и restart. Direct exclusions нет.
+Повторный apply сравнивает фактические теги Xray и не создаёт дубликатов.
 Внутренний планировщик helper раз в 30 секунд запускает `proxy-domain reconcile` через тот же Unix API.
 Helper сравнивает systemd InvocationID и восстанавливает runtime overlay только
-для нового запуска Xray / первого вызова после запуска helper. Успех фиксируется
+для нового запуска Xray / первого вызова после запуска helper, а также после
+неудачной синхронизации desired при неизменном запуске Xray. Успех фиксируется
 в памяти после apply и повторной проверки InvocationID; ошибка повторяется на
 следующем тике. Остановленный Xray планировщик не запускает; это не синхронный hook запуска Xray.
 Замена файлов и runtime apply сериализуются общим координатором. Скачивание

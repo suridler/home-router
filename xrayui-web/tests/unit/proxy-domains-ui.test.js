@@ -38,6 +38,17 @@ function snapshot(...domains) {
   };
 }
 
+test('deletion messages distinguish USERLIST deferral from immediate dynamic removal', () => {
+  const app = appFixture();
+  const pending = { ...snapshot(), pendingDeletions: ['example.com'] };
+  assert.match(app.proxyDomainDeletedMessage({ applied: true, snapshot: pending }, 'example.com'),
+    /останется в USERLIST до следующего обновления геобаз/);
+  assert.match(app.proxyDomainDeletedMessage({ applied: true, snapshot: snapshot() }, 'example.com'),
+    /удалена из динамического списка/);
+  assert.match(app.proxyDomainDeletedMessage({ applied: false, snapshot: pending }, 'example.com'),
+    /ещё не применены/);
+});
+
 test('proxy domain additions are gated in the handler for disabled control, pending work, safe apply and setup', async () => {
   const blockedStates = [
     { status: { controlEnabled: false } },

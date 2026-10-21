@@ -16,10 +16,10 @@ var (
 	errRuntimeIdentityChanged     = errors.New("domain runtime identity changed during reconciliation")
 )
 
-// RuntimeReconciler reapplies the desired proxy-domain overlay when the Xray
-// runtime identity changes. The last successful identity is intentionally kept
+// RuntimeReconciler synchronizes desired resources after an Xray restart or
+// a failed runtime mutation. The last successful identity is intentionally kept
 // in memory only: after a helper restart one replay is safe because the typed
-// routing payload replaces the managed runtime rule group.
+// resource rule tags make replay idempotent without rebuilding static rules.
 type RuntimeReconciler struct {
 	service     *Service
 	identity    func(context.Context) (string, error)
@@ -37,8 +37,8 @@ func NewRuntimeReconciler(service *Service, identity func(context.Context) (stri
 	return &RuntimeReconciler{service: service, identity: identity}, nil
 }
 
-// Reconcile synchronizes the desired proxy-domain overlay when the runtime
-// identity differs from the last successfully applied one. It reports whether
+// Reconcile synchronizes desired resources when the runtime identity changes
+// or a previous mutation left runtime synchronization pending. It reports whether
 // a runtime apply occurred. The token is recorded only after a successful
 // apply and a stable second identity check, so any failure is retried by the
 // next scheduled invocation.
@@ -64,7 +64,7 @@ func (reconciler *RuntimeReconciler) Reconcile(ctx context.Context) (bool, error
 	if strings.TrimSpace(token) == "" {
 		return false, errRuntimeIdentityEmpty
 	}
-	if token == reconciler.lastToken {
+	if token == reconciler.lastToken && !reconciler.service.runtimeDirty {
 		return false, nil
 	}
 

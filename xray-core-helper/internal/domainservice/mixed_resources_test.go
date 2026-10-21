@@ -157,7 +157,7 @@ func TestMixedAddKeepsDomainAndIPv4RulesSeparateAndDeterministic(t *testing.T) {
 	}
 }
 
-func TestMixedBaselineIPReplacementOrdersExclusionAdditionsAndPermanentRules(t *testing.T) {
+func TestMixedBaselineIPDeletionWaitsForGeodataUpdate(t *testing.T) {
 	ctx := context.Background()
 	client := &runtimeClient{}
 	service, store, _ := newService(t, mixedConfigJSONC, client)
@@ -205,7 +205,6 @@ func TestMixedBaselineIPReplacementOrdersExclusionAdditionsAndPermanentRules(t *
 	rules := mixedRules(t, last)
 	wantTags := []string{
 		"system-api",
-		domain.IPv4ExclusionsRuleTag,
 		domain.IPv4AdditionsRuleTag,
 		"proxy-domains-permanent",
 		"proxy-ip-permanent",
@@ -214,22 +213,15 @@ func TestMixedBaselineIPReplacementOrdersExclusionAdditionsAndPermanentRules(t *
 	if got := mixedTags(rules); !reflect.DeepEqual(got, wantTags) {
 		t.Fatalf("IP replacement rule order = %v; want %v", got, wantTags)
 	}
-	exclusion := mixedRuleByTag(t, rules, domain.IPv4ExclusionsRuleTag)
 	additions := mixedRuleByTag(t, rules, domain.IPv4AdditionsRuleTag)
-	if !reflect.DeepEqual(exclusion.IP, []string{"192.0.2.20"}) ||
-		len(exclusion.Domain) != 0 || exclusion.OutboundTag != "direct" {
-		t.Fatalf("IP exclusion rule = %#v; want direct baseline IP only", exclusion)
-	}
 	if !reflect.DeepEqual(additions.IP, []string{"192.0.2.21"}) ||
 		len(additions.Domain) != 0 || additions.OutboundTag != "proxy" {
 		t.Fatalf("IP additions rule = %#v; want proxy replacement IP only", additions)
 	}
-	exclusionIndex := mixedRuleIndex(t, rules, domain.IPv4ExclusionsRuleTag)
-	additionsIndex := mixedRuleIndex(t, rules, domain.IPv4AdditionsRuleTag)
-	permanentDomainIndex := mixedRuleIndex(t, rules, "proxy-domains-permanent")
-	permanentIPIndex := mixedRuleIndex(t, rules, "proxy-ip-permanent")
-	if !(exclusionIndex < additionsIndex && additionsIndex < permanentDomainIndex && permanentDomainIndex < permanentIPIndex) {
-		t.Fatalf("IP exclusion/additions must precede permanent rules: %v", mixedTags(rules))
+	for _, rule := range rules {
+		if rule.RuleTag == domain.IPv4ExclusionsRuleTag || rule.RuleTag == domain.ExclusionsRuleTag {
+			t.Fatal("baseline deletion must not create a runtime direct exception")
+		}
 	}
 	for _, forbidden := range []string{"domain:192.0.2.20", "domain:192.0.2.21"} {
 		if strings.Contains(string(last), forbidden) {
