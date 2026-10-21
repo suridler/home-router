@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"sync"
@@ -55,7 +56,7 @@ func TestStartupRecoversBeforeProbeAfterEveryReplacement(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				reopened, err := newFileStore(store.root, entries, store.validate)
+				reopened, err := newFileStore(store.root, entries, store.config, store.validate)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -160,7 +161,7 @@ func TestStartupFailsClosedOnInvalidManifestAndUnreadableConfig(t *testing.T) {
 		t.Run(fmt.Sprint(invalidManifest), func(t *testing.T) {
 			root := t.TempDir()
 			config := filepath.Join(root, "config.json")
-			store, err := newFileStore(filepath.Join(root, "state"), []templatecatalog.Entry{{ID: templatecatalog.XrayConfig}}, func(context.Context, templatecatalog.ID, string) error { return nil })
+			store, err := newFileStore(filepath.Join(root, "state"), []templatecatalog.Entry{{ID: templatecatalog.XrayConfig}}, testconfig.Defaults(), func(context.Context, templatecatalog.ID, string) error { return nil })
 			if err != nil {
 				t.Fatal(err)
 			}

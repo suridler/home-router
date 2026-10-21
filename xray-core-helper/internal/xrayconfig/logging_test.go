@@ -1,6 +1,7 @@
 package xrayconfig
 
 import (
+	"home-router/xray-core-helper/internal/testconfig"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestPlanLogConfigurationEveryModeLevelAndDNSCombination(t *testing.T) {
 					}
 					t.Run(name, func(t *testing.T) {
 						request := loggingRequest(accessMode, errorMode, level, dnsLog)
-						updated, err := plan(t, PlanLogConfiguration(request), loggingFixture)
+						updated, err := plan(t, testPlanLogConfiguration(request), loggingFixture)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -56,10 +57,10 @@ func TestPlanLogConfigurationEveryModeLevelAndDNSCombination(t *testing.T) {
 							t.Fatal(err)
 						}
 						logging := asMap(parsed.value["log"])
-						if got, want := logging["access"], logTargetPath(accessMode, managedAccessLogPath); got != want {
+						if got, want := logging["access"], logTargetPath(accessMode, testconfig.Defaults().Logging.AccessFilePath); got != want {
 							t.Errorf("access = %#v, want %#v", got, want)
 						}
-						if got, want := logging["error"], logTargetPath(errorMode, managedErrorLogPath); got != want {
+						if got, want := logging["error"], logTargetPath(errorMode, testconfig.Defaults().Logging.ErrorFilePath); got != want {
 							t.Errorf("error = %#v, want %#v", got, want)
 						}
 						if logging["loglevel"] != level || logging["dnsLog"] != dnsLog {
@@ -74,7 +75,7 @@ func TestPlanLogConfigurationEveryModeLevelAndDNSCombination(t *testing.T) {
 
 func TestPlanLogConfigurationPreservesCommentsUnknownFieldsAndOrdering(t *testing.T) {
 	request := loggingRequest(api.LogTargetFile, api.LogTargetDisabled, "debug", true)
-	updated, err := plan(t, PlanLogConfiguration(request), loggingFixture)
+	updated, err := plan(t, testPlanLogConfiguration(request), loggingFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestPlanLogConfigurationPreservesCommentsUnknownFieldsAndOrdering(t *testin
 
 func TestPlanLogConfigurationAddsMissingMembersToUncommentedLogObject(t *testing.T) {
 	source := `{"log":{"custom":true},"keep":1}`
-	updated, err := plan(t, PlanLogConfiguration(loggingRequest(api.LogTargetJournal, api.LogTargetFile, "info", false)), source)
+	updated, err := plan(t, testPlanLogConfiguration(loggingRequest(api.LogTargetJournal, api.LogTargetFile, "info", false)), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestPlanLogConfigurationAddsMissingMembersToUncommentedLogObject(t *testing
 		t.Fatal(err)
 	}
 	logging := asMap(parsed.value["log"])
-	if logging["access"] != "" || logging["error"] != managedErrorLogPath ||
+	if logging["access"] != "" || logging["error"] != testconfig.Defaults().Logging.ErrorFilePath ||
 		logging["loglevel"] != "info" || logging["dnsLog"] != false || logging["custom"] != true {
 		t.Fatalf("unexpected log object: %#v", logging)
 	}
@@ -124,11 +125,11 @@ func TestPlanLogConfigurationAddsMissingMembersToUncommentedLogObject(t *testing
 
 func TestPlanLogConfigurationNoOpAndIdempotency(t *testing.T) {
 	request := loggingRequest(api.LogTargetFile, api.LogTargetJournal, "warning", false)
-	first, err := plan(t, PlanLogConfiguration(request), loggingFixture)
+	first, err := plan(t, testPlanLogConfiguration(request), loggingFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	planner := PlanLogConfiguration(request)
+	planner := testPlanLogConfiguration(request)
 	edits, err := planner([]byte(first))
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +163,7 @@ func TestPlanLogConfigurationRejectsInvalidRequestsWithoutLeakingValues(t *testi
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := PlanLogConfiguration(test.request)([]byte(loggingFixture))
+			_, err := testPlanLogConfiguration(test.request)([]byte(loggingFixture))
 			if err == nil || rejectCode(err) != test.code {
 				t.Fatalf("error = %v (%s), want %s", err, rejectCode(err), test.code)
 			}
@@ -195,7 +196,7 @@ func TestPlanLogConfigurationRejectsMalformedOrAmbiguousLogObjects(t *testing.T)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := PlanLogConfiguration(loggingRequest(api.LogTargetFile, api.LogTargetFile, "info", true))([]byte(test.source))
+			_, err := testPlanLogConfiguration(loggingRequest(api.LogTargetFile, api.LogTargetFile, "info", true))([]byte(test.source))
 			if err == nil || rejectCode(err) != test.code {
 				t.Fatalf("error = %v (%s), want %s", err, rejectCode(err), test.code)
 			}
@@ -219,4 +220,8 @@ func TestValidateLogConfigurationRequestRedactsStableErrors(t *testing.T) {
 	if strings.Contains(err.Error(), "private-secret") {
 		t.Fatalf("error leaked invalid mode: %v", err)
 	}
+}
+
+func testPlanLogConfiguration(request api.LogConfigurationRequest) transaction.Planner {
+	return PlanLogConfiguration(request, testconfig.Defaults().Logging)
 }

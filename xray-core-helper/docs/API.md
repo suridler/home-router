@@ -12,10 +12,10 @@ sudo curl --silent --show-error \
   http://helper/v1/ready | jq
 ```
 
-Внешнего TCP listener нет. Доступ к socket означает доверенный доступ к API; полноценное разграничение клиентов по ролям пока не реализовано. Ответы не содержат исходный конфиг, пароли или ключи.
+Внешнего TCP listener нет. Доступ к socket означает доверенный доступ к API; полноценное разграничение клиентов по ролям пока не реализовано. Обычные проекции не содержат исходный конфиг, пароли или ключи. Исключение O14 — явный редактор одного выбранного outbound и результат импорта: они возвращают действительные credentials этого подключения с `Cache-Control: no-store`. Списки, сводки, ошибки и журналы остаются redacted.
 
 Команды с JSON-телом принимают один объект ограниченного размера:
-неизвестные и повторённые поля отклоняются, включая вложенные объекты.
+неизвестные поля типизированной оболочки и повторённые поля JSON отклоняются, включая вложенные объекты. Native outbound O14 сохраняет неизвестные поля Xray; его структуру проверяет библиотечный тип, а окончательную валидность — установленный Xray.
 Допустимость null и обязательность полей проверяет конкретная команда.
 Операции с пустым телом сохраняют свои отдельные контракты.
 Ответы `/v1` могут расширяться новыми полями: CLI и exporter игнорируют
@@ -82,11 +82,21 @@ sysctl/nft; строгий post-start Xray запускает routing. Это и
 отключает прежний независимый autostart routing без её остановки; см.
 [эксплуатацию](../../docs/OPERATIONS.md#переход-с-прежнего-helper-зависимого-профиля).
 
+### Сохранение настроек helper
+
+Все settings API читают общий effective config: заводской
+`/usr/share/xray-core-helper/templConf/config.toml` с наложением ключей
+`/etc/xray-core-helper/config.toml`. Запись меняет только свой раздел,
+сохраняет остальные разделы и записывает только отличия от defaults.
+Сохранение default удаляет переопределение. Явные false/пустые значения
+не означают отсутствие ключа; допустимость результата проверяется как прежде.
+
 ### Настройки журналов
 
 `PUT /v1/xray/logging` согласует четыре поля Xray с `[logging]` helper TOML.
 Режим `file` сохраняет путь из TOML; при предыдущем journal/disabled использует
-`/var/log/xray/access.log` или `/var/log/xray/error.log`. Произвольные пути в
+`logging.access_file_path` / `logging.error_file_path` из полного TOML
+(по умолчанию `/var/log/xray/access.log` и `/var/log/xray/error.log`). Произвольные пути в
 HTTP-запросе не принимаются. Последующий template apply использует сохранённые
 значения. Частичная запись TOML/Xray восстанавливается по приватному журналу
 после штатного восстановления конфигурационной транзакции.
@@ -376,3 +386,59 @@ operation, `lastSuccessfulAt`, `nextScheduledAt` (Unix ms; отсутствуе�
 Ошибка cleanup — warning. История операций хранится в SQLite; journal связывается
 с панелью тем же ID и кодом. После прерывания сохраняется этап и
 `geodata_interrupted`; новая попытка доступна без общего recovery/rollback.
+
+
+## Подключения outbound (O14)
+
+| Endpoint | Назначение |
+| --- | --- |
+| `GET /v1/xray/outbounds` | Список tag/protocol без credentials |
+| `POST /v1/xray/outbound-drafts/import` | Одна ссылка → новый native-черновик, без записи/restart |
+| `POST /v1/xray/outbound-drafts/apply` | Создать новый outbound из черновика |
+| `GET /v1/xray/outbounds/{tag}` | Явно открыть одно редактируемое подключение с credentials |
+| `PUT /v1/xray/outbounds/{tag}` | Сохранить полный выбранный объект; tag/protocol неизменны |
+| `POST /v1/xray/outbounds/{tag}/replace` | Явно заменить подключение, включая протокол |
+| `GET /v1/xray/outbounds/{tag}/references` | Ссылки routing/balancers и цепочек outbound |
+| `DELETE /v1/xray/outbounds/{tag}` | Удалить незащищённое подключение без ссылок |
+
+Импорт принимает `{"uri":"..."}` и возвращает `{"outbound":{...},"warnings":[...]}`.
+Используется pinned `libXray/share` v1.261017.0 (commit `75ccb623c807`), без
+второго URI-парсера. Неизвестные URI-параметры могут быть отброшены upstream;
+результат нужно просмотреть. Подписки, списки ссылок и импорт полного конфига
+не принимаются. Парсер не скачивает удалённые документы.
+
+Запись принимает `expectedGeneration`, `restart`, `outbound` — один native-объект
+Xray, и только для замены `confirmReplacement: true`. Это содержимое одного
+подключения, не JSON patch всего конфига. Неизвестные параметры сохраняются,
+если они остались в отправленном объекте; отсутствующие поля удаляются.
+Пустое поле не означает «сохранить старый секрет».
+
+В обычном edit нельзя менять tag/protocol. Замена принимает новый объект,
+сохраняя из старого только tag и обязательную исходящую марку helper;
+старые settings/streamSettings/mux/sendThrough/цепочки не сливаются с новым.
+Поле tag можно опустить либо передать тот же tag, что в path. `proxy` разрешено
+редактировать/заменять, но запрещено удалять; `direct`, `block`, `dns-out`
+защищены от этого редактора. Их изменение остаётся отдельной явной работой
+с конфигурацией. Марка наследуется из действующего конфига, а не из константы.
+
+Все записи используют существующие generation/hash, JSONC-правки, проверку
+кандидата установленным `xray run -test`, backup/restart/recovery. Сеть и inbounds
+не изменяются. Старые `/outbounds/vless`, `/vless/preview` и `/{tag}/vless`
+удалены: импортировать поверх существующего подключения нельзя.
+
+CLI использует тот же API. Credentials передаются через stdin, не аргументы:
+
+```bash
+xray-core-helper outbound list
+xray-core-helper outbound get proxy
+xray-core-helper outbound references proxy
+xray-core-helper outbound import < connection-uri.txt
+xray-core-helper outbound create --expected-generation 7 --restart < outbound.json
+xray-core-helper outbound update proxy --expected-generation 8 --restart < outbound.json
+xray-core-helper outbound replace proxy --expected-generation 9 --confirm-replacement --restart < new-outbound.json
+xray-core-helper outbound delete backup --expected-generation 10 --restart
+```
+
+`outbound.json` содержит только native outbound, не оболочку API. Вывод get/import
+содержит credentials: не включайте его в общие диагностические отчёты.
+Опция `--restart` явная; без неё проверенный конфиг сохраняется на диск.

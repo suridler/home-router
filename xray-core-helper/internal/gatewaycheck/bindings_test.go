@@ -2,6 +2,7 @@ package gatewaycheck
 
 import (
 	"context"
+	_ "home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"

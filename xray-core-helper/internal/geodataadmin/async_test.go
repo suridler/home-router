@@ -2,6 +2,7 @@ package geodataadmin
 
 import (
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func TestAsyncAdmissionDisconnectReplayConflictAndCompletion(t *testing.T) {
 	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
 	defer store.Close()
 	u := &blockingUpdater{started: make(chan context.Context, 2), release: make(chan struct{})}
-	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, u)
+	executor, err := NewExecutor(service, testconfig.Defaults().Geodata, u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestAsyncCloseCancelsAndJoinsWorkerBeforeStoreCloses(t *testing.T) {
 	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
 	defer store.Close()
 	u := &blockingUpdater{started: make(chan context.Context, 1), release: make(chan struct{})}
-	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, u)
+	executor, err := NewExecutor(service, testconfig.Defaults().Geodata, u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestAsyncFailureIsPolledAndReplayedWithoutRerunning(t *testing.T) {
 	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
 	defer store.Close()
 	updater := &reportUpdater{report: api.GeodataReport{Replaced: 1, Issues: []api.GeodataIssue{{Process: "external", File: "geosite.dat", Stage: "checksum", Code: "geodata_external_checksum_failed", Message: "checksum mismatch"}}}}
-	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+	executor, err := NewExecutor(service, testconfig.Defaults().Geodata, updater)
 	if err != nil {
 		t.Fatal(err)
 	}

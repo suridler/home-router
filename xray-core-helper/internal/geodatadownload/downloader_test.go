@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"home-router/xray-core-helper/internal/testconfig"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -476,7 +477,8 @@ func TestDownloadDoesNotUseLiveInternetForUntrustedSources(t *testing.T) {
 
 func configFor(baseURL string) bootstrap.GeodataConfig {
 	return bootstrap.GeodataConfig{
-		Origins: []string{originFor(baseURL)},
+		MaxAssetSizeMB: testconfig.Defaults().Geodata.MaxAssetSizeMB,
+		Origins:        []string{originFor(baseURL)},
 		Geosite: bootstrap.GeodataSourceConfig{
 			URL: baseURL + "/geosite.dat",
 			Checksum: bootstrap.GeodataChecksumConfig{

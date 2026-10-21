@@ -3,12 +3,12 @@ package templateapply
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/nativeblock"
 	"home-router/xray-core-helper/internal/templatecatalog"
 	"home-router/xray-core-helper/internal/xrayconfig"
@@ -58,7 +58,7 @@ func TestRuntimeUsesOnlyFixedCommandsPerTemplate(t *testing.T) {
 					t.Fatal(err)
 				}
 				if test.id == templatecatalog.XrayConfig {
-					config := bootstrap.Defaults()
+					config := testconfig.Defaults()
 					config.Network.Interface, config.Network.Address, config.Network.IPv4Prefix = "br-test", "192.0.2.1", "192.0.2.0/24"
 					raw, err = xrayconfig.RenderSetupTemplate(raw, nil, xrayconfig.TemplateValues{Network: config.Network, Logging: config.Logging, API: config.Xray.API, UserGeosite: config.Geodata.UserGeosite, UserGeoip: config.Geodata.UserGeoip})
 					if err != nil {

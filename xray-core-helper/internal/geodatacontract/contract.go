@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"home-router/xray-core-helper/internal/geodatalimits"
 	"net/http"
 
 	"home-router/xray-core-helper/internal/api"
@@ -44,7 +43,7 @@ func (contract Contract) GetStatus(ctx context.Context) (api.GeodataStatusRespon
 		operation = &projected
 	}
 	return api.GeodataStatusResponse{
-		MaxAssetSizeMB: geodatalimits.Bytes(status.Settings.Settings.MaxAssetSizeMB) / geodatalimits.BytesPerMB,
+		MaxAssetSizeMB: status.Settings.Settings.MaxAssetSizeMB,
 		Settings: api.VersionedGeodataSettings{
 			Generation: status.Settings.Generation,
 			Settings:   contractAPIGeodataSettings(status.Settings.Settings),

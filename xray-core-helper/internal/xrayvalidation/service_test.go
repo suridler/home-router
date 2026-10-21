@@ -3,11 +3,11 @@ package xrayvalidation
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"reflect"
 	"strings"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/commandrunner"
 )
 
@@ -30,7 +30,7 @@ func (runner *fakeRunner) Run(_ context.Context, executable string, args []strin
 }
 
 func TestValidateRunsExactConfiguredActiveConfigCommand(t *testing.T) {
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	config.Xray.Config = t.TempDir() + "/active.jsonc"
 	runner := &fakeRunner{}
 	service, err := New(config, runner)
@@ -84,7 +84,7 @@ func TestValidateMapsFailuresToRedactedTypedErrors(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := bootstrap.Defaults()
+			config := testconfig.Defaults()
 			config.Xray.Config = t.TempDir() + "/active-secret.jsonc"
 			runner := &fakeRunner{err: test.err}
 			service, err := New(config, runner)
@@ -137,7 +137,7 @@ func TestValidateUsesTypedContextFailures(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config := bootstrap.Defaults()
+			config := testconfig.Defaults()
 			config.Xray.Config = t.TempDir() + "/service-selected.json"
 			runner := &fakeRunner{}
 			service, err := New(config, runner)
@@ -172,7 +172,7 @@ func TestNewRejectsInvalidConfiguredPaths(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := bootstrap.Defaults()
+			config := testconfig.Defaults()
 			config.Xray.Binary = test.binary
 			config.Xray.Config = test.config
 			if _, err := New(config, &fakeRunner{}); err == nil {

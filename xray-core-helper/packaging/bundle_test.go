@@ -1,6 +1,7 @@
 package packaging
 
 import (
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestNewInstallationGeodataSources(t *testing.T) {
-	config, err := bootstrap.Load("../config.example.toml")
+	config, err := testconfig.Load("../config.example.toml")
 	if err != nil {
 		t.Fatal(err)
 	}

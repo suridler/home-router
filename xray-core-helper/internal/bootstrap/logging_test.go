@@ -11,17 +11,17 @@ func TestLoggingAndUserGeoipConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := Load(path)
+	config, err := testLoad(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Logging != (LoggingConfig{AccessPath: "none", Level: "warning"}) || config.Geodata.UserGeoip != "geoip_user.dat" {
+	if config.Logging != (LoggingConfig{AccessPath: "none", Level: "warning", AccessFilePath: "/var/log/xray/access.log", ErrorFilePath: "/var/log/xray/error.log"}) || config.Geodata.UserGeoip != "geoip_user.dat" {
 		t.Fatal("unexpected initial logging or geoip settings")
 	}
 	if err := os.WriteFile(path, []byte("[logging]\naccess_path = ''\nerror_path = '/var/log/xray/custom.log'\nlevel = 'error'\ndns_log = true\n[geodata]\nuser_geoip = 'geoip_custom.dat'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err = Load(path)
+	config, err = testLoad(path)
 	if err != nil || config.Logging.AccessPath != "" || !config.Logging.DNSLog || config.Geodata.UserGeoip != "geoip_custom.dat" {
 		t.Fatal("custom logging/geoip config not loaded", err)
 	}

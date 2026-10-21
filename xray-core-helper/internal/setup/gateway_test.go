@@ -3,8 +3,8 @@ package setup
 import (
 	"bytes"
 	"context"
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/templatecatalog"
+	"home-router/xray-core-helper/internal/testconfig"
 	"home-router/xray-core-helper/internal/xrayconfig"
 	"os"
 	"strings"
@@ -25,7 +25,7 @@ func TestGatewayPlanUsesExistingPortAndMarkAndRecoversWorkingTemplates(t *testin
 		}
 	}
 	defaults, _ := os.ReadFile(entries[0].WorkingPath)
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	config.Network.Interface, config.Network.Address, config.Network.IPv4Prefix = "lan0", "10.0.0.1", "10.0.0.0/24"
 	values := setupTemplateValues(config)
 	existing, err := xrayconfig.RenderSetupTemplate(defaults, []byte(`{"inbounds":[{"tag":"tproxy-in","port":61000}],"outbounds":[{"streamSettings":{"sockopt":{"mark":42}}}]}`), values)

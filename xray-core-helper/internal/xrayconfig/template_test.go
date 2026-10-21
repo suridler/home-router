@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"home-router/xray-core-helper/internal/domain"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 )
 
 func templateTestValues() TemplateValues {
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	return TemplateValues{
 		Network: bootstrap.NetworkConfig{Interface: "br-test", Address: "192.0.2.1", IPv4Prefix: "192.0.2.0/24", InterceptMark: 1, PolicyTable: 100},
 		Logging: config.Logging, API: config.Xray.API,

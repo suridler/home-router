@@ -2,12 +2,12 @@ package systemsettings
 
 import (
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"home-router/xray-core-helper/internal/api"
-	"home-router/xray-core-helper/internal/bootstrap"
 )
 
 func TestPutPersistsAndUpdatesRuntimeValue(t *testing.T) {
@@ -15,7 +15,7 @@ func TestPutPersistsAndUpdatesRuntimeValue(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[network]\ninterface = 'br-lan'\naddress = '10.0.0.1'\nipv4_prefix = '10.0.0.0/24'\nintercept_mark = 2\npolicy_table = 321\n[scheduler]\ngeodata_update_enabled = false\ngeodata_update_time = '23:45'\n[backup]\nretain_per_template = 10\n[web]\nhost = '192.0.2.1'\nport = 3001\ncontrol_enabled = false\n"), 0640); err != nil {
 		t.Fatal(err)
 	}
-	config, err := bootstrap.Load(path)
+	config, err := testconfig.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestPutPersistsAndUpdatesRuntimeValue(t *testing.T) {
 	if err != nil || updated.Backup.RetainPerTemplate != 25 {
 		t.Fatalf("updated=%#v err=%v", updated, err)
 	}
-	loaded, err := bootstrap.Load(path)
+	loaded, err := testconfig.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestPutRejectsLimitsWithoutChangingFile(t *testing.T) {
 			if err := os.WriteFile(path, original, 0600); err != nil {
 				t.Fatal(err)
 			}
-			config, _ := bootstrap.Load(path)
+			config, _ := testconfig.Load(path)
 			service, _ := New(path, config)
 			if _, err := service.Put(context.Background(), api.UpdateSystemSettingsRequest{Backup: api.BackupSettings{RetainPerTemplate: value}}); err != ErrInvalidSettings {
 				t.Fatalf("err=%v", err)
@@ -73,13 +73,13 @@ func TestPutRejectsLimitsWithoutChangingFile(t *testing.T) {
 func TestConnectivitySettingsApplyImmediatelyAndSurviveReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	os.WriteFile(path, []byte("[backup]\nretain_per_template = 10\n"), 0600)
-	config, _ := bootstrap.Load(path)
+	config, _ := testconfig.Load(path)
 	service, _ := New(path, config)
 	want := api.ConnectivitySettings{URL: "https://example.com/check", ExpectedStatus: 200, TimeoutSeconds: 10}
 	if _, err := service.Put(context.Background(), api.UpdateSystemSettingsRequest{Backup: api.BackupSettings{RetainPerTemplate: 10}, Connectivity: &want}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := bootstrap.Load(path)
+	loaded, err := testconfig.Load(path)
 	if err != nil || loaded.Connectivity.URL != want.URL || service.Connectivity() != loaded.Connectivity {
 		t.Fatal(loaded.Connectivity, err)
 	}

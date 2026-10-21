@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"home-router/xray-core-helper/internal/testconfig"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -175,7 +176,7 @@ func httpGeodataService(t *testing.T, recovery geodatarecovery.Status) geodataco
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	cfg.Geodata.Geosite = initial.Geosite
 	cfg.Geodata.Geoip = initial.Geoip
 	cfg.Geodata.Origins = []string{}

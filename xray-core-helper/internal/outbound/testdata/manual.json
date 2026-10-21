@@ -1,0 +1,15 @@
+[
+ {"tag":"fixture-vless","protocol":"vless","settings":{"address":"edge.example","port":443,"id":"22222222-2222-4222-8222-222222222222","encryption":"none"},"streamSettings":{"network":"raw","security":"tls","tlsSettings":{"serverName":"edge.example"}}},
+ {"tag":"fixture-vmess","protocol":"vmess","settings":{"address":"edge.example","port":443,"id":"22222222-2222-4222-8222-222222222222","security":"auto"}},
+ {"tag":"fixture-trojan","protocol":"trojan","settings":{"address":"edge.example","port":443,"password":"fixture-only"}},
+ {"tag":"fixture-shadowsocks","protocol":"shadowsocks","settings":{"address":"edge.example","port":443,"method":"aes-128-gcm","password":"fixture-only"}},
+ {"tag":"fixture-socks","protocol":"socks","settings":{"address":"edge.example","port":1080,"user":"fixture","pass":"fixture-only"}},
+ {"tag":"fixture-http","protocol":"http","settings":{"address":"edge.example","port":8080,"user":"fixture","pass":"fixture-only"}},
+ {"tag":"fixture-wireguard","protocol":"wireguard","settings":{"secretKey":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","address":["192.0.2.2/32"],"peers":[{"publicKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","endpoint":"192.0.2.1:51820","allowedIPs":["0.0.0.0/0"]}]}},
+ {"tag":"fixture-hysteria","protocol":"hysteria","settings":{"version":2,"address":"edge.example","port":443},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"edge.example"},"hysteriaSettings":{"version":2,"auth":"fixture-only"}}},
+ {"tag":"fixture-masque","protocol":"masque","settings":{"address":"edge.example","port":443},"streamSettings":{"network":"masque","security":"tls","tlsSettings":{"serverName":"edge.example"},"masqueSettings":{"host":"edge.example","path":"/proxy","user":"fixture","pass":"fixture-only"}}},
+ {"tag":"fixture-freedom","protocol":"freedom","settings":{"domainStrategy":"AsIs"}},
+ {"tag":"fixture-blackhole","protocol":"blackhole","settings":{"response":{"type":"none"}}},
+ {"tag":"fixture-dns","protocol":"dns","settings":{"rules":[{"action":"hijack","qType":"1,28"},{"action":"return","rCode":5}]}},
+ {"tag":"fixture-loopback","protocol":"loopback","settings":{"inboundTag":"fixture-in"}}
+]

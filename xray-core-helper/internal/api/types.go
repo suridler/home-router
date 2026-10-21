@@ -241,31 +241,6 @@ type MutationResponse struct {
 	ContentHash string `json:"contentHash"`
 }
 
-type VlessPreviewRequest struct {
-	URI string `json:"uri"`
-}
-
-type VlessPreviewResponse struct {
-	Address               string   `json:"address"`
-	Port                  int      `json:"port"`
-	Transport             string   `json:"transport"`
-	Security              string   `json:"security"`
-	Flow                  string   `json:"flow"`
-	ServerName            string   `json:"serverName"`
-	UnsupportedParameters []string `json:"unsupportedParameters"`
-}
-
-type AddVlessOutboundRequest struct {
-	MutationRequest
-	Tag string `json:"tag"`
-	URI string `json:"uri"`
-}
-
-type UpdateVlessOutboundRequest struct {
-	MutationRequest
-	URI string `json:"uri"`
-}
-
 type AddRuleRequest struct {
 	MutationRequest
 	Rule     RuleInput `json:"rule"`

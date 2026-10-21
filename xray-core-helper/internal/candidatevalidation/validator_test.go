@@ -3,12 +3,12 @@ package candidatevalidation
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/xrayconfig"
 )
 
@@ -40,7 +40,7 @@ func TestCandidatesUseCurrentCompanionsAndNeverChangeLiveFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cfg := bootstrap.Defaults()
+			cfg := testconfig.Defaults()
 			cfg.Xray.Config = configPath
 			calls := 0
 			validator, err := New(cfg, Options{TempRoot: root, Runner: runFunc(func(_ context.Context, binary string, args, env []string) error {

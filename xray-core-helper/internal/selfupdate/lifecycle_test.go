@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,17 +50,23 @@ type lifecycleEnv struct {
 func newLifecycleEnv(t *testing.T) *lifecycleEnv {
 	t.Helper()
 	fs := Files{SystemRoot: t.TempDir()}
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	raw, err := toml.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("marshal bootstrap defaults: %v", err)
 	}
 	writeLifecycleFile(t, fs.Path(bootstrap.DefaultConfigPath), string(raw))
+	defaults, err := os.ReadFile(testconfig.TemplatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLifecycleFile(t, fs.Path(bootstrap.DefaultTemplatePath), string(defaults))
 	runner := &lifecycleRunner{}
 	e := &Engine{
 		Store:           NewStore(filepath.Join(t.TempDir(), "state")),
 		Files:           fs,
 		Runner:          runner,
+		ResolveAssets:   func(context.Context) (string, error) { return "/usr/local/share/xray", nil },
 		ConfigPath:      bootstrap.DefaultConfigPath,
 		InstallerSource: filepath.Join(fs.SystemRoot, "installer-source"),
 		Check:           func(context.Context, *Operation) error { return nil },
@@ -97,6 +104,13 @@ func installLifecycleInstaller(t *testing.T, e *Engine) string {
 }
 
 var lifecycleCandidateFiles = map[string]string{
+	"xray-core-helper/templConf/config.toml": string(func() []byte {
+		raw, err := os.ReadFile(testconfig.TemplatePath())
+		if err != nil {
+			panic(err)
+		}
+		return raw
+	}()),
 	"xray-core-helper/templConf/xray/config.json":                            "new-xray-template\n",
 	"xray-core-helper/templConf/nftables/nftables.conf":                      "new-nft-template\n",
 	"xray-core-helper/templConf/systemd/xray-tproxy-routing.service":         "new-routing-template\n",

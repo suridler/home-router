@@ -96,6 +96,7 @@ func TestSourceInstallRefreshesShippedTemplatesWithoutApplying(t *testing.T) {
 	scriptPath := filepath.Join(project, "packaging/install-templconf.sh")
 	writeTemplateFixture(t, scriptPath, []byte(script), 0700)
 	writeTemplateFixture(t, filepath.Join(project, "packaging/systemd/50-tproxy.conf"), []byte("factory hook"), 0644)
+	writeTemplateFixture(t, filepath.Join(project, "templConf/config.toml"), []byte("factory defaults"), 0644)
 	working := filepath.Join(root, "etc/xray-core-helper/templConf")
 	for _, asset := range templateAssets {
 		writeTemplateFixture(t, filepath.Join(working, asset.directory, asset.name), []byte("old template"), 0600)
@@ -111,6 +112,9 @@ func TestSourceInstallRefreshesShippedTemplatesWithoutApplying(t *testing.T) {
 		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
 			t.Fatalf("source install: %v: %s", err, output)
 		}
+		gotDefaults, err := os.ReadFile(filepath.Join(root, "usr/share/xray-core-helper/templConf/config.toml"))
+		if err != nil || string(gotDefaults) != "factory defaults" { t.Fatal("factory defaults missing", err) }
+		if _, err := os.Stat(filepath.Join(working, "config.toml")); !os.IsNotExist(err) { t.Fatal("unexpected helper defaults working copy", err) }
 		for _, asset := range templateAssets {
 			path := filepath.Join(working, asset.directory, asset.name)
 			got, err := os.ReadFile(path)

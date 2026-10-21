@@ -3,6 +3,7 @@ package geodataupdate
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func TestCycleIndependentProcessesAndSingleRestart(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
 			dir := t.TempDir()
-			cfg := bootstrap.Defaults().Geodata
+			cfg := testconfig.Defaults().Geodata
 			store, err := domainstore.Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
 			if err != nil {
 				t.Fatal(err)
@@ -149,7 +150,7 @@ func TestCycleIndependentProcessesAndSingleRestart(t *testing.T) {
 func TestFailedRestoreKeepsEvidenceAndDoesNotRestartInvalidSet(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	cfg := bootstrap.Defaults().Geodata
+	cfg := testconfig.Defaults().Geodata
 	store, err := domainstore.Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +207,7 @@ func TestRetryActivatesFilesLeftByInterruptedOrFailedRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := bootstrap.Defaults().Geodata
+	cfg := testconfig.Defaults().Geodata
 	if err := store.AddDesired(ctx, "example.com"); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +282,7 @@ func TestUnboundUserlistKeepsDynamicRulesUntilBinding(t *testing.T) {
 	if err := store.AddDesired(ctx, "example.com"); err != nil {
 		t.Fatal(err)
 	}
-	cfg := bootstrap.Defaults().Geodata
+	cfg := testconfig.Defaults().Geodata
 	cfg.UserGeosite = "geosite_new.dat"
 	bound := false
 	token := "old"

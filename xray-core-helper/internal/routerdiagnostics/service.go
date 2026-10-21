@@ -77,7 +77,7 @@ var fixedCommands = []commandSpec{
 
 func New() (*Service, error) { return NewWithXrayPath("/usr/local/etc/xray/config.json") }
 func NewWithXrayPath(path string, networks ...bootstrap.NetworkConfig) (*Service, error) {
-	network := bootstrap.Defaults().Network
+	var network bootstrap.NetworkConfig
 	if len(networks) > 0 {
 		network = networks[0]
 	}

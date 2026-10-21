@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,7 +30,7 @@ func settingsFixture(t *testing.T) (*Service, *loggingState, transaction.Metadat
 	if err := os.WriteFile(path, raw, 0640); err != nil {
 		t.Fatal(err)
 	}
-	c, err := bootstrap.Load(path)
+	c, err := testconfig.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,9 @@ func settingsFixture(t *testing.T) (*Service, *loggingState, transaction.Metadat
 }
 
 func nextLogs() bootstrap.LoggingConfig {
-	return bootstrap.LoggingConfig{AccessPath: "/custom/access.log", ErrorPath: "", Level: "info", DNSLog: true}
+	next := testconfig.Defaults().Logging
+	next.AccessPath, next.ErrorPath, next.Level, next.DNSLog = "/custom/access.log", "", "info", true
+	return next
 }
 
 func TestLoggingSettingsCommitRollbackAndUnrelatedPut(t *testing.T) {
@@ -67,7 +70,7 @@ func TestLoggingSettingsCommitRollbackAndUnrelatedPut(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c, err := bootstrap.Load(s.path)
+			c, err := testconfig.Load(s.path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +94,7 @@ func TestLoggingSettingsCommitRollbackAndUnrelatedPut(t *testing.T) {
 			if _, err := s.Put(context.Background(), api.UpdateSystemSettingsRequest{Backup: api.BackupSettings{RetainPerTemplate: 17}}); err != nil {
 				t.Fatal(err)
 			}
-			c, _ = bootstrap.Load(s.path)
+			c, _ = testconfig.Load(s.path)
 			if commit && c.Logging != nextLogs() {
 				t.Fatal("unrelated PUT reverted logging")
 			}
@@ -124,7 +127,7 @@ func TestLoggingSettingsRecoveryUsesXrayCommitAfterCrash(t *testing.T) {
 			if phase == "Xray committed" {
 				state.state = after
 			}
-			config, err := bootstrap.Load(s.path)
+			config, err := testconfig.Load(s.path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +139,7 @@ func TestLoggingSettingsRecoveryUsesXrayCommitAfterCrash(t *testing.T) {
 			if err := fresh.RecoverLogging(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			want := bootstrap.Defaults().Logging
+			want := testconfig.Defaults().Logging
 			if phase == "Xray committed" || phase == "no-op Xray" {
 				want = nextLogs()
 			}
@@ -181,7 +184,7 @@ func TestLoggingSettingsRecoveryRejectsDriftAndPendingXray(t *testing.T) {
 				}
 			}
 			beforeDisk, _ := os.ReadFile(s.path)
-			config, _ := bootstrap.Load(s.path)
+			config, _ := testconfig.Load(s.path)
 			fresh, err := New(s.path, config)
 			if err != nil {
 				t.Fatal(err)
@@ -248,7 +251,7 @@ func TestLoggingJournalCannotAlterUnrelatedSettings(t *testing.T) {
 	if err := os.WriteFile(s.journalPath(), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, _ := bootstrap.Load(s.path)
+	config, _ := testconfig.Load(s.path)
 	fresh, _ := New(s.path, config)
 	fresh.SetLoggingMetadata(state)
 	if err := fresh.RecoverLogging(context.Background()); !errors.Is(err, ErrLoggingRecovery) {

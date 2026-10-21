@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"home-router/xray-core-helper/internal/transaction"
-	"home-router/xray-core-helper/internal/vless"
 )
 
 var (
@@ -40,133 +39,6 @@ func findOutbound(syntax *parsedSource, tag string) (int, map[string]any) {
 	return -1, nil
 }
 
-func parseVlessForEdit(uri string, key vless.TransportKey) (vless.Parsed, error) {
-	parsed, err := vless.Parse(uri, key)
-	if err != nil {
-		return vless.Parsed{}, transaction.Reject("invalid_vless_uri", err.Error(), 400)
-	}
-	if names := parsed.Preview.UnsupportedParameters; len(names) > 0 {
-		return vless.Parsed{}, transaction.Reject("unsupported_vless_parameters",
-			"unsupported VLESS URI parameters: "+strings.Join(names, ", "), 400)
-	}
-	return parsed, nil
-}
-
-// PlanAddVlessOutbound inherits the current native egress mark, not a default.
-func PlanAddVlessOutbound(tag, uri string) transaction.Planner {
-	return func(source []byte) ([]transaction.ByteEdit, error) {
-		if err := validateOutboundTag(tag); err != nil {
-			return nil, err
-		}
-		e, err := newEditor(source)
-		if err != nil {
-			return nil, err
-		}
-		array, err := outboundsArray(e.syntax)
-		if err != nil {
-			return nil, err
-		}
-		if index, _ := findOutbound(e.syntax, tag); index >= 0 {
-			return nil, transaction.Reject("outbound_exists", fmt.Sprintf("outbound '%s' already exists", tag), 409)
-		}
-		if _, reserved := protectedOutboundTag[tag]; reserved {
-			return nil, transaction.Reject("outbound_protected", fmt.Sprintf("outbound tag '%s' is reserved by the gateway profile", tag), 403)
-		}
-		if tag == "vless" {
-			return nil, transaction.Reject("invalid_outbound_tag", "outbound tag 'vless' collides with an API route", 400)
-		}
-		parsed, err := parseVlessForEdit(uri, vless.TransportKeyNetwork)
-		if err != nil {
-			return nil, err
-		}
-		mark := 0
-		for _, value := range asSlice(e.syntax.value["outbounds"]) {
-			sock := asMap(asMap(asMap(value)["streamSettings"])["sockopt"])
-			if raw, exists := sock["mark"]; exists {
-				n, ok := markInteger(raw)
-				if !ok || (mark != 0 && mark != n) {
-					return nil, transaction.Reject("egress_mark_ambiguous", "native egress mark is ambiguous", 422)
-				}
-				mark = n
-			}
-		}
-		if mark == 0 {
-			return nil, transaction.Reject("egress_mark_ambiguous", "native egress mark is unavailable", 422)
-		}
-		parsed.StreamSettings["sockopt"] = map[string]any{"mark": mark}
-		edit, err := e.appendArrayItem(array, map[string]any{
-			"tag":            tag,
-			"protocol":       "vless",
-			"settings":       parsed.Settings,
-			"streamSettings": parsed.StreamSettings,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return []transaction.ByteEdit{edit}, nil
-	}
-}
-
-// PlanUpdateVlessOutbound replaces settings and streamSettings of an existing VLESS outbound.
-func PlanUpdateVlessOutbound(tag, uri string) transaction.Planner {
-	return func(source []byte) ([]transaction.ByteEdit, error) {
-		if err := validateOutboundTag(tag); err != nil {
-			return nil, err
-		}
-		e, err := newEditor(source)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := outboundsArray(e.syntax); err != nil {
-			return nil, err
-		}
-		index, outbound := findOutbound(e.syntax, tag)
-		if index < 0 {
-			return nil, transaction.Reject("outbound_not_found", fmt.Sprintf("outbound '%s' was not found", tag), 404)
-		}
-		if protocol, _ := outbound["protocol"].(string); protocol != "vless" {
-			return nil, transaction.Reject("outbound_not_vless", fmt.Sprintf("outbound '%s' is not VLESS", tag), 400)
-		}
-		existingStream := asMap(outbound["streamSettings"])
-		key := vless.TransportKeyNetwork
-		if _, hasMethod := existingStream["method"]; hasMethod {
-			key = vless.TransportKeyMethod
-		}
-		parsed, err := parseVlessForEdit(uri, key)
-		if err != nil {
-			return nil, err
-		}
-		if sockopt, ok := existingStream["sockopt"]; ok {
-			parsed.StreamSettings["sockopt"] = sockopt
-		}
-		work := newSession(source)
-		for _, member := range []struct {
-			name  string
-			value any
-		}{{"settings", parsed.Settings}, {"streamSettings", parsed.StreamSettings}} {
-			err := work.apply(func(step *editor) ([]transaction.ByteEdit, error) {
-				array, err := outboundsArray(step.syntax)
-				if err != nil {
-					return nil, err
-				}
-				node := array.array[index]
-				var edit transaction.ByteEdit
-				if current := node.object[member.name]; current != nil {
-					edit, err = step.replaceNode(current, member.value)
-				} else {
-					edit, err = step.appendObjectMember(node, member.name, member.value)
-				}
-				return []transaction.ByteEdit{edit}, err
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		return work.edits(), nil
-	}
-}
-
-// PlanDeleteOutbound removes an unprotected, unreferenced outbound.
 func PlanDeleteOutbound(tag string) transaction.Planner {
 	return func(source []byte) ([]transaction.ByteEdit, error) {
 		if err := validateOutboundTag(tag); err != nil {
@@ -215,6 +87,15 @@ func outboundReferences(config map[string]any, tag string) []string {
 		}
 		if fallback, _ := balancer["fallbackTag"].(string); fallback == tag {
 			references = append(references, fmt.Sprintf("routing.balancers[%d].fallbackTag", index))
+		}
+	}
+	for index, item := range asSlice(config["outbounds"]) {
+		out := asMap(item)
+		if asMap(asMap(out["streamSettings"])["sockopt"])["dialerProxy"] == tag {
+			references = append(references, fmt.Sprintf("outbounds[%d].streamSettings.sockopt.dialerProxy", index))
+		}
+		if asMap(out["proxySettings"])["tag"] == tag {
+			references = append(references, fmt.Sprintf("outbounds[%d].proxySettings.tag", index))
 		}
 	}
 	sort.Strings(references)

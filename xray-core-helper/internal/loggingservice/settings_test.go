@@ -3,6 +3,7 @@ package loggingservice
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,7 @@ func TestSettingsAndXrayShareSuccessfulAndFailedLoggingMutations(t *testing.T) {
 			if err := os.WriteFile(helperPath, originalTOML, 0640); err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := bootstrap.Load(helperPath)
+			cfg, err := testconfig.Load(helperPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +65,7 @@ func TestSettingsAndXrayShareSuccessfulAndFailedLoggingMutations(t *testing.T) {
 				t.Fatal(err)
 			}
 			settings.SetLoggingMetadata(store)
-			service, err := New(engine, preparer, noOpRotationPreparer{})
+			service, err := New(engine, preparer, noOpRotationPreparer{}, testconfig.Defaults().Logging)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +116,7 @@ func TestSettingsAndXrayShareSuccessfulAndFailedLoggingMutations(t *testing.T) {
 				if code != "logging_saved_restart_failed" || restarter.calls != 1 {
 					t.Fatalf("restart failure was hidden or rolled back: %v calls=%d", err, restarter.calls)
 				}
-				persisted, loadErr := bootstrap.Load(helperPath)
+				persisted, loadErr := testconfig.Load(helperPath)
 				if loadErr != nil || persisted.Logging != preparedValues || !strings.Contains(string(actual), "/custom/access.log") {
 					t.Fatal("confirmed settings not retained")
 				}
@@ -144,7 +145,7 @@ func TestSettingsAndXrayShareSuccessfulAndFailedLoggingMutations(t *testing.T) {
 						t.Fatalf("Xray lost %q", want)
 					}
 				}
-				persisted, err := bootstrap.Load(helperPath)
+				persisted, err := testconfig.Load(helperPath)
 				if err != nil || persisted.Logging != preparedValues {
 					t.Fatalf("TOML and Xray differ: %+v, %v", persisted.Logging, err)
 				}
@@ -165,7 +166,7 @@ func TestSettingsAndXrayShareSuccessfulAndFailedLoggingMutations(t *testing.T) {
 				if _, err := settings.Put(context.Background(), api.UpdateSystemSettingsRequest{Backup: api.BackupSettings{RetainPerTemplate: 21}}); err != nil {
 					t.Fatal(err)
 				}
-				persisted, _ = bootstrap.Load(helperPath)
+				persisted, _ = testconfig.Load(helperPath)
 				if persisted.Logging != preparedValues {
 					t.Fatal("settings PUT reverted logging")
 				}
@@ -184,7 +185,8 @@ func (f fakePathChecker) Check(context.Context, bootstrap.LoggingConfig) (logpat
 }
 
 func TestResolvedLoggingModesPreserveConfiguredPathsAndDefaults(t *testing.T) {
-	current := bootstrap.LoggingConfig{AccessPath: "/custom/a.log", ErrorPath: "/custom/e.log", Level: "warning"}
+	current := testconfig.Defaults().Logging
+	current.AccessPath, current.ErrorPath = "/custom/a.log", "/custom/e.log"
 	request := validRequest(0, false).LogConfigurationRequest
 	got, err := xrayconfig.ResolveLogConfiguration(request, current)
 	if err != nil || got.AccessPath != current.AccessPath || got.ErrorPath != current.ErrorPath {

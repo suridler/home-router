@@ -11,11 +11,13 @@ project_dir=$(dirname -- "$script_dir")
 factory_root=/usr/share/xray-core-helper/templConf
 
 install -d -o root -g root -m 0755 \
+    "$factory_root" \
     "$factory_root/xray" \
     "$factory_root/nftables" \
     "$factory_root/systemd" \
     "$factory_root/sysctl"
 
+install -o root -g root -m 0644 "$project_dir/templConf/config.toml" "$factory_root/config.toml"
 install -o root -g root -m 0644 "$project_dir/templConf/xray/config.json" "$factory_root/xray/config.json"
 install -o root -g root -m 0644 "$project_dir/templConf/nftables/nftables.conf" "$factory_root/nftables/nftables.conf"
 install -o root -g root -m 0644 "$project_dir/templConf/systemd/xray-tproxy-routing.service" "$factory_root/systemd/xray-tproxy-routing.service"

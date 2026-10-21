@@ -76,7 +76,7 @@ func TestSetupGeoipPairCreationPreservationAndRecovery(t *testing.T) {
 				t.Fatal("geoip binding missing", err)
 			}
 			// Simulate daemon restart: recovery uses only durable manifest/candidate evidence.
-			fresh, err := newFileStore(s.root, s.entries, s.validate)
+			fresh, err := newFileStore(s.root, s.entries, s.config, s.validate)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -276,7 +276,7 @@ func TestSetupGeoipPairAndNetworkRecoverTogether(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := newFileStore(s.root, s.entries, s.validate)
+	fresh, err := newFileStore(s.root, s.entries, s.config, s.validate)
 	if err != nil {
 		t.Fatal(err)
 	}

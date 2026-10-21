@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"home-router/xray-core-helper/internal/testconfig"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,7 +36,7 @@ func (u *asyncHTTPUpdater) UpdateReportProgress(ctx context.Context, _ bootstrap
 func TestGeodataHTTPReturnsAcceptedAndSurvivesRequestDisconnect(t *testing.T) {
 	contract := httpGeodataService(t, cleanHTTPRecovery())
 	updater := &asyncHTTPUpdater{started: make(chan context.Context, 1), release: make(chan struct{})}
-	executor, err := geodataadmin.NewExecutor(contract.Service, bootstrap.Defaults().Geodata, updater)
+	executor, err := geodataadmin.NewExecutor(contract.Service, testconfig.Defaults().Geodata, updater)
 	if err != nil {
 		t.Fatal(err)
 	}

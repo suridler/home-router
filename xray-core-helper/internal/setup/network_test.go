@@ -3,11 +3,10 @@ package setup
 import (
 	"bytes"
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"home-router/xray-core-helper/internal/bootstrap"
 )
 
 func TestNetworkSelectionParticipatesInSetupCommitAndCrashRecovery(t *testing.T) {
@@ -44,7 +43,7 @@ func TestNetworkSelectionParticipatesInSetupCommitAndCrashRecovery(t *testing.T)
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c, err := bootstrap.Load(path)
+	c, err := testconfig.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +55,7 @@ func TestNetworkSelectionParticipatesInSetupCommitAndCrashRecovery(t *testing.T)
 		t.Fatal("config permissions changed")
 	}
 	// A fresh process reads the committed selection, then restores the durable group.
-	fresh, err := newFileStore(s.root, s.entries, s.validate)
+	fresh, err := newFileStore(s.root, s.entries, s.config, s.validate)
 	if err != nil {
 		t.Fatal(err)
 	}

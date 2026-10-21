@@ -2,13 +2,13 @@ package templatecatalog
 
 import (
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/xrayconfig"
 )
 
@@ -59,7 +59,7 @@ func TestXrayRepositoryTemplateRendersParseableJSONC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	config.Network.Interface, config.Network.Address, config.Network.IPv4Prefix = "br-test", "192.0.2.1", "192.0.2.0/24"
 	rendered, err := xrayconfig.RenderSetupTemplate(raw, nil, xrayconfig.TemplateValues{Network: config.Network, Logging: config.Logging, API: config.Xray.API, UserGeosite: config.Geodata.UserGeosite, UserGeoip: config.Geodata.UserGeoip})
 	if err != nil {

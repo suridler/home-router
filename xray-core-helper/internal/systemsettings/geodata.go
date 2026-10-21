@@ -1,7 +1,6 @@
 package systemsettings
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -9,7 +8,6 @@ import (
 	"os"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/pelletier/go-toml/v2/unstable"
 	"home-router/xray-core-helper/internal/bootstrap"
 )
 
@@ -29,11 +27,11 @@ func (s *Service) readGeodata(ctx context.Context) (bootstrap.Config, uint64, er
 	if err != nil {
 		return bootstrap.Config{}, 0, err
 	}
-	return geodataSnapshot(raw)
+	return s.geodataSnapshot(raw)
 }
 
-func geodataSnapshot(raw []byte) (bootstrap.Config, uint64, error) {
-	cfg, err := decodeSettings(raw)
+func (s *Service) geodataSnapshot(raw []byte) (bootstrap.Config, uint64, error) {
+	cfg, err := s.decodeSettings(raw)
 	if err != nil {
 		return bootstrap.Config{}, 0, err
 	}
@@ -60,7 +58,7 @@ func (s *Service) PutGeodata(ctx context.Context, expected uint64, geo bootstrap
 	if err != nil {
 		return bootstrap.Config{}, 0, err
 	}
-	cfg, generation, err := geodataSnapshot(raw)
+	cfg, generation, err := s.geodataSnapshot(raw)
 	if err != nil {
 		return bootstrap.Config{}, 0, err
 	}
@@ -74,81 +72,14 @@ func (s *Service) PutGeodata(ctx context.Context, expected uint64, geo bootstrap
 	if _, err := os.Lstat(s.journalPath()); !errors.Is(err, os.ErrNotExist) {
 		return bootstrap.Config{}, 0, ErrLoggingRecovery
 	}
-	encoded, err := toml.Marshal(struct {
-		Geodata   bootstrap.GeodataConfig   `toml:"geodata"`
-		Scheduler bootstrap.SchedulerConfig `toml:"scheduler"`
-	}{geo, schedule})
+	next, err := bootstrap.UpdateOverrides(raw, cfg, "geodata", "scheduler")
 	if err != nil {
 		return bootstrap.Config{}, 0, err
 	}
-	// Parse section boundaries rather than interpreting lines inside TOML
-	// multiline strings/arrays as headers. Unrelated text stays byte-for-byte.
-	kept, err := withoutGeodataSections(raw)
-	if err != nil {
-		return bootstrap.Config{}, 0, err
-	}
-	next := append(bytes.TrimRight(kept, "\n"), []byte("\n\n"+string(encoded))...)
 
-	if _, err := decodeSettings(next); err != nil {
-		return bootstrap.Config{}, 0, err
-	}
 	if err := replace(s.path, next); err != nil {
 		return bootstrap.Config{}, 0, err
 	}
 	s.config.Geodata, s.config.Scheduler = geo, schedule
 	return s.readGeodata(ctx)
-}
-
-func withoutGeodataSections(raw []byte) ([]byte, error) {
-	type segment struct {
-		offset int
-		drop   bool
-	}
-	var parser unstable.Parser
-	parser.KeepComments = true
-	parser.Reset(raw)
-	segments := []segment{}
-	inTable, owned := false, false
-	for parser.NextExpression() {
-		node := parser.Expression()
-		offset, drop := int(node.Raw.Offset), false
-		switch node.Kind {
-		case unstable.Table, unstable.ArrayTable, unstable.KeyValue:
-			keys := node.Key()
-			if !keys.Next() {
-				return nil, ErrInvalidSettings
-			}
-			key := keys.Node()
-			offset = int(key.Raw.Offset)
-			ownKey := string(key.Data) == "geodata" || string(key.Data) == "scheduler"
-			if node.Kind != unstable.KeyValue {
-				inTable = true
-				owned = ownKey
-			}
-			drop = owned || (!inTable && ownKey)
-		case unstable.Comment:
-		default:
-			return nil, ErrInvalidSettings
-		}
-		start := bytes.LastIndexByte(raw[:offset], '\n') + 1
-		segments = append(segments, segment{start, drop})
-	}
-	if parser.Error() != nil {
-		return nil, ErrInvalidSettings
-	}
-	if len(segments) == 0 {
-		return append([]byte(nil), raw...), nil
-	}
-	var kept bytes.Buffer
-	kept.Write(raw[:segments[0].offset])
-	for i, segment := range segments {
-		end := len(raw)
-		if i+1 < len(segments) {
-			end = segments[i+1].offset
-		}
-		if !segment.drop {
-			kept.Write(raw[segment.offset:end])
-		}
-	}
-	return kept.Bytes(), nil
 }

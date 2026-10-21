@@ -37,9 +37,16 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("xray-core-helper", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	defaultsPath := flags.String("defaults", bootstrap.TemplateFile, "path to full helper defaults TOML")
 	configPath := flags.String("config", bootstrap.DefaultConfigPath, "path to helper TOML config")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+
+	if *defaultsPath != bootstrap.TemplateFile {
+		previous := bootstrap.TemplateFile
+		bootstrap.TemplateFile = *defaultsPath
+		defer func() { bootstrap.TemplateFile = previous }()
 	}
 
 	arguments := flags.Args()
@@ -56,6 +63,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(arguments) == 0 {
 		writeUsage(stderr)
 		return 2
+	}
+	if arguments[0] == "outbound" {
+		return runOutbound(arguments[1:], *configPath, os.Stdin, stdout, stderr)
 	}
 	if len(arguments) > 0 && arguments[0] == "network-probe" {
 		if len(arguments) > 2 || (len(arguments) == 2 && arguments[1] != "status") {
@@ -100,8 +110,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return writeJSONCode(stdout, struct {
-			Socket string `json:"socket"`
-		}{cfg.Server.Socket})
+			Socket  string `json:"socket"`
+			WebPort int    `json:"webPort"`
+		}{cfg.Server.Socket, cfg.Web.Port})
 	}
 	if len(arguments) > 0 && arguments[0] == "setup-select" {
 		return runSetupSelection(arguments[1:], os.Stdin, stdout, stderr)
@@ -706,6 +717,9 @@ func writeJSON(writer io.Writer, value any) error {
 }
 
 func writeUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] outbound list|get TAG|references TAG|import")
+	fmt.Fprintln(writer, "       xray-core-helper [-config PATH] outbound create|update TAG|replace TAG|delete TAG --expected-generation N [--restart] [--confirm-replacement]")
+	fmt.Fprintln(writer, "       outbound import reads one URI from stdin; create/update/replace read one native outbound JSON object")
 	fmt.Fprintln(writer, "usage: xray-core-helper [-config PATH] health")
 	fmt.Fprintln(writer, "       xray-core-helper version | install [--version TAG | --bundle ROOT | --recover] [--with-web|--without-web]")
 	fmt.Fprintln(writer, "       xray-core-helper update check|status|prepare [TAG]")

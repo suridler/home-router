@@ -17,7 +17,7 @@ test('unknown safety state and stale snapshots block every normal mutation handl
     const app=fixture();Object.assign(app,blocked);app.api=()=>assert.fail('blocked handler sent a request');
     for (const [name,args] of [
       ['addProxyDomain',['example.com']],['deleteProxyDomain',['example.com']],['runAction',['restart']],['activateNetwork',[]],
-      ['saveSystemSettings',[]],['saveLogs',[]],['saveGeodata',[]],['updateGeodata',[]],['importVless',[]],['addVless',[]],['deleteOutbound',[]],
+      ['saveSystemSettings',[]],['saveLogs',[]],['saveGeodata',[]],['updateGeodata',[]],['saveConnection',[]],['deleteOutbound',[]],
       ['saveRoutingRule',[]],['removeRoutingRule',[{tag:'test'}]],['moveRoutingRule',[{tag:'test'},'up']],
       ['applyTemplateSettings',[{templateId:'sysctl',state:'different'}]],['acceptSystemSettings',[{templateId:'sysctl',state:'different'}]]
     ]) await app[name](...args);

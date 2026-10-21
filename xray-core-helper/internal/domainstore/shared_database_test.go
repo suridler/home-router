@@ -3,12 +3,12 @@ package domainstore_test
 import (
 	"context"
 	"database/sql"
+	"home-router/xray-core-helper/internal/testconfig"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/domainstore"
 	"home-router/xray-core-helper/internal/errorhistory"
 	"home-router/xray-core-helper/internal/geodataadmin"
@@ -190,7 +190,7 @@ func TestAllSharedStoresReopenWithScheduler(t *testing.T) {
 						t.Fatal(cycle, err)
 					}
 					defer domains.Close()
-					geodata, err := geodataadmin.Open(ctx, path, bootstrap.Defaults().Geodata)
+					geodata, err := geodataadmin.Open(ctx, path, testconfig.Defaults().Geodata)
 					if err != nil {
 						t.Fatal(cycle, err)
 					}

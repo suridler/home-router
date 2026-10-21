@@ -19,11 +19,17 @@ func (reader Reader) OutboundEndpoint(ctx context.Context, tag string) (string, 
 		if safeString(outbound["tag"]) != tag {
 			continue
 		}
-		servers := asSlice(asMap(outbound["settings"])["vnext"])
-		if len(servers) != 1 {
-			return "", errors.New("outbound endpoint ambiguous")
+		server := asMap(outbound["settings"])
+		if _, flat := server["address"]; !flat {
+			servers := asSlice(server["vnext"])
+			if len(servers) == 0 {
+				servers = asSlice(server["servers"])
+			}
+			if len(servers) != 1 {
+				return "", errors.New("outbound endpoint ambiguous")
+			}
+			server = asMap(servers[0])
 		}
-		server := asMap(servers[0])
 		host := safeString(server["address"])
 		port, ok := relationInteger(server["port"])
 		if !ok || host == "" || len(host) > 253 {

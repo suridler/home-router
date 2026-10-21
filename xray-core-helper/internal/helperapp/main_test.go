@@ -3,6 +3,7 @@ package helperapp
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,7 +130,7 @@ func TestDaemonRecoveryProviderTracksManagerAndCoordinatorState(t *testing.T) {
 func daemonGeodataFixture(t *testing.T, enabled bool) (bootstrap.Config, *geodataadmin.Service, *domainstore.Store) {
 	t.Helper()
 	directory := t.TempDir()
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	config.Xray.Config = filepath.Join(directory, "xray.json")
 	config.Storage.Database = filepath.Join(directory, "helper.sqlite")
 	config.Server.Socket = filepath.Join(directory, "helper.sock")
@@ -139,8 +140,8 @@ func daemonGeodataFixture(t *testing.T, enabled bool) (bootstrap.Config, *geodat
 	if enabled {
 		config.Geodata = bootstrap.GeodataConfig{
 			MaxAssetSizeMB: 256,
-			UserGeosite:    bootstrap.DefaultUserGeositeName,
-			UserGeoip:      bootstrap.DefaultUserGeoipName,
+			UserGeosite:    testconfig.Defaults().Geodata.UserGeosite,
+			UserGeoip:      testconfig.Defaults().Geodata.UserGeoip,
 			Builder:        "/usr/local/bin/domain-list-community",
 			Origins:        []string{"https://downloads.example"},
 			Geosite: bootstrap.GeodataSourceConfig{

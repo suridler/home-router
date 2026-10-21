@@ -16,7 +16,7 @@ func TestWebDefaultsAndTOMLOverrides(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[web]\nhost = '192.0.2.1'\nport = 3001\ncontrol_enabled = false\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := Load(path)
+	config, err := testLoad(path)
 	if err != nil {
 		t.Fatal(err)
 	}

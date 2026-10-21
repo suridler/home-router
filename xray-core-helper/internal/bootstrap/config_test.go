@@ -13,14 +13,14 @@ func TestLoadAppliesDefaultsAndOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config, err := Load(path)
+	config, err := testLoad(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.Server.Socket != "/tmp/helper.sock" {
 		t.Fatalf("server socket = %q", config.Server.Socket)
 	}
-	if config.Xray.Binary != "/usr/local/bin/xray" || config.Storage.Database != "/var/lib/xray-core-helper/helper.sqlite" {
+	if config.Xray.Binary != "" || config.Storage.Database != "/var/lib/xray-core-helper/helper.sqlite" {
 		t.Fatalf("defaults were not applied: %#v", config)
 	}
 }
@@ -32,7 +32,7 @@ func TestGeodataSizeLimitConfig(t *testing.T) {
 			if err := os.WriteFile(path, []byte("[geodata]\n"+value+"\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			config, err := Load(path)
+			config, err := testLoad(path)
 			bad := strings.Contains(value, "= 0") || strings.Contains(value, "= -1")
 			if bad {
 				if err == nil || !strings.Contains(err.Error(), "max_asset_size_mb") {
@@ -56,7 +56,7 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[server]\nsocket = \"/tmp/helper.sock\"\nextra = true\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "strict mode") {
+	if _, err := testLoad(path); err == nil || !strings.Contains(err.Error(), "strict mode") {
 		t.Fatalf("Load() error = %v; want unknown-field error", err)
 	}
 }
@@ -66,7 +66,7 @@ func TestConfigPathCannotOverrideServiceThroughTOML(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[xray]\nconfig = \"/tmp/other.json\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil {
+	if _, err := testLoad(path); err == nil {
 		t.Fatal("accepted independent xray.config setting")
 	}
 	if Defaults().Xray.Config != "" {
@@ -79,7 +79,7 @@ func TestLoadRejectsRelativeFilesystemPaths(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[storage]\ndatabase = \"var/lib/helper.sqlite\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "absolute path") {
+	if _, err := testLoad(path); err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Fatalf("Load() error = %v; want absolute-path error", err)
 	}
 }
@@ -359,7 +359,7 @@ func TestLoadRejectsUnknownGeodataTOMLFields(t *testing.T) {
 			if err := os.WriteFile(path, []byte(test.body), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "strict mode") {
+			if _, err := testLoad(path); err == nil || !strings.Contains(err.Error(), "strict mode") {
 				t.Fatalf("Load() error = %v; want strict unknown-field error", err)
 			}
 		})
@@ -372,7 +372,7 @@ func TestLoadRejectsDuplicateGeodataTOMLFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil {
+	if _, err := testLoad(path); err == nil {
 		t.Fatal("Load() accepted a duplicate geodata TOML field")
 	}
 }
@@ -389,10 +389,11 @@ func TestGeodataValidationDoesNotMutateFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config, err := Load(path)
+	config, err := testLoad(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	config.Xray.AssetDir = "/usr/local/share/xray"
 	if _, err := config.GeodataAssetPath("geosite.dat"); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +443,7 @@ func TestServiceOwnedPathKeysAreNotTOMLSettings(t *testing.T) {
 		if err := os.WriteFile(path, []byte("[xray]\n"+key+" = \"/etc/other\"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Load(path); err == nil {
+		if _, err := testLoad(path); err == nil {
 			t.Fatal("accepted independent service path", key)
 		}
 	}

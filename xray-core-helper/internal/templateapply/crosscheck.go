@@ -68,14 +68,14 @@ func NewCrossCheckerWithCatalog(validator Validator, catalog templatecatalog.Cat
 	if validator == nil {
 		return nil, &Error{Code: CodeValidation}
 	}
-	name := bootstrap.DefaultUserGeositeName
+	name := ""
 	if len(userGeosite) > 0 {
 		name = userGeosite[0]
 	}
-	if !bootstrap.ValidUserGeositeName(name) {
+	if name != "" && !bootstrap.ValidUserGeositeName(name) {
 		return nil, &Error{Code: CodeBindingInvalid}
 	}
-	return &CrossChecker{network: bootstrap.Defaults().Network, userGeosite: name, catalog: catalog, validator: validator, identity: xrayidentity.New().GID, read: func(path string) ([]byte, error) { content, _, _, _, _, err := readRegular(path); return content, err }}, nil
+	return &CrossChecker{userGeosite: name, catalog: catalog, validator: validator, identity: xrayidentity.New().GID, read: func(path string) ([]byte, error) { content, _, _, _, _, err := readRegular(path); return content, err }}, nil
 }
 
 // Check validates native syntax and only explicitly declared relationships.

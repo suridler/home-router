@@ -3,12 +3,12 @@ package templatestatus
 import (
 	"bytes"
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"home-router/xray-core-helper/internal/api"
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/nativerender"
 	"home-router/xray-core-helper/internal/templatecatalog"
 	"home-router/xray-core-helper/internal/templatecompare"
@@ -26,7 +26,7 @@ func TestXrayStatusRendersSettingsAndInvalidatesRevision(t *testing.T) {
 	root := t.TempDir()
 	entry := templatecatalog.Entry{ID: templatecatalog.XrayConfig, WorkingPath: filepath.Join(root, "source.json"), SystemPath: filepath.Join(root, "system.json")}
 	raw := []byte("{\n// helper:v1 bind level type=log-level source=helper.logging.level\n\"loglevel\": ${level}\n}\n")
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	values := xrayconfig.TemplateValues{Logging: config.Logging}
 	renderer := nativerender.Renderer{Xray: &values}
 	render := func(ctx context.Context, _ templatecatalog.Entry, raw []byte) ([]byte, error) {
@@ -93,7 +93,7 @@ func TestNativeStatusComparesPreparedCandidateWithoutRewritingTemplate(t *testin
 				raw = append([]byte("# helper:begin gateway\n"), raw...)
 				raw = append(raw, []byte("# helper:end gateway\n")...)
 			}
-			renderer := nativerender.Renderer{Network: bootstrap.Defaults().Network}
+			renderer := nativerender.Renderer{Network: testconfig.Defaults().Network}
 			render := func(ctx context.Context, _ templatecatalog.Entry, b []byte) ([]byte, error) {
 				return renderer.Render(ctx, b)
 			}

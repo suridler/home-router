@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"home-router/xray-core-helper/internal/testconfig"
 	"io"
 	"net"
 	"net/http"
@@ -360,5 +361,31 @@ func TestResponseDecoderAcceptsAdditionalFields(t *testing.T) {
 		if err := decodeResponseJSON([]byte(body), &value); err == nil {
 			t.Fatalf("accepted %s", body)
 		}
+	}
+}
+
+func TestStandaloneInstallationSettingsUseExplicitBundleDefaults(t *testing.T) {
+	dir := t.TempDir()
+	raw, err := os.ReadFile(testconfig.TemplatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := filepath.Join(dir, "defaults.toml")
+	if err := os.WriteFile(defaults, []byte(strings.Replace(string(raw), "port = 3000", "port = 3200", 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	user := filepath.Join(dir, "operator.toml")
+	if err := os.WriteFile(user, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostic strings.Builder
+	if code := run([]string{"-defaults", defaults, "-config", user, "installation-settings"}, &out, &diagnostic); code != 0 {
+		t.Fatalf("code=%d: %s", code, diagnostic.String())
+	}
+	var settings struct {
+		WebPort int `json:"webPort"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &settings); err != nil || settings.WebPort != 3200 {
+		t.Fatal("bundle defaults ignored", err, out.String())
 	}
 }

@@ -61,10 +61,13 @@ func testHeadlessBundle(t *testing.T, prebuilt bool) {
 	fixture := filepath.Join(root, "helper")
 	bin := filepath.Join(root, "bin")
 	log := filepath.Join(root, "calls")
-	for _, dir := range []string{bin, filepath.Join(fixture, "packaging")} {
+	for _, dir := range []string{bin, filepath.Join(fixture, "packaging"), filepath.Join(fixture, "templConf")} {
 		if err = os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err = os.WriteFile(filepath.Join(fixture, "templConf/config.toml"), []byte("fixture defaults"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(fixture, "config.example.toml"), []byte("[web]\nhost = \"127.0.0.1\"\nport = 3000\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -113,11 +116,11 @@ done
 		t.Fatal(err)
 	}
 	cli := filepath.Join(bin, "helper-cli")
-	if err = os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\n' '{\"socket\":\"/run/test-helper.sock\"}'\n"), 0700); err != nil {
+	if err = os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\n' '{\"socket\":\"/run/test-helper.sock\",\"webPort\":3000}'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	source = strings.ReplaceAll(source, `"$build_dir/xray-core-helper" discover-xray`, cli+" discover-xray")
-	source = strings.ReplaceAll(source, `"$build_dir/xray-core-helper" -config`, cli+" -config")
+	source = strings.ReplaceAll(source, `"$build_dir/xray-core-helper" -defaults`, cli+" -defaults")
 	source = strings.ReplaceAll(source, "/usr/local/bin/xray-core-helper", cli)
 	installer := string(stub) + `
 last=""; previous=""
@@ -200,7 +203,7 @@ esac
 		}
 	}
 	// An in-flight former job must not be interrupted or replaced by an upgrade.
-	if err = os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\n' '{\"socket\":\"/run/test-helper.sock\"}'\n"), 0700); err != nil {
+	if err = os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\n' '{\"socket\":\"/run/test-helper.sock\",\"webPort\":3000}'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(bin, "systemctl"), stub, 0700); err != nil {

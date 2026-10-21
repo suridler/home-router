@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/pelletier/go-toml/v2"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,7 +58,7 @@ func TestExecutorUsesTOMLSnapshotAndReplaysWithoutRepeatingWork(t *testing.T) {
 	store, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
 	defer store.Close()
 	updater := &reportUpdater{}
-	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+	executor, err := NewExecutor(service, testconfig.Defaults().Geodata, updater)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func TestExecutorPersistsPartialResultsActivationAndWarnings(t *testing.T) {
 			if kind == "cancelled" {
 				updater.cancel = cancel
 			}
-			executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+			executor, err := NewExecutor(service, testconfig.Defaults().Geodata, updater)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,7 +199,7 @@ func executionErrorIs(err error, code string, status int) bool {
 func TestExecutorReturnsKnownResultsWhenFinalPersistenceFails(t *testing.T) {
 	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
 	updater := &reportUpdater{report: api.GeodataReport{Replaced: 1, Files: []api.GeodataFileResult{{File: "geoip.dat", State: "replaced"}}}, after: func() { store.Close() }}
-	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+	executor, err := NewExecutor(service, testconfig.Defaults().Geodata, updater)
 	if err != nil {
 		t.Fatal(err)
 	}

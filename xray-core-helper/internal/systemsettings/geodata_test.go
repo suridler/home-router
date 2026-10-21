@@ -3,13 +3,12 @@ package systemsettings
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-
-	"home-router/xray-core-helper/internal/bootstrap"
 )
 
 func TestGeodataDefaultsManualEditsAndOwnedSections(t *testing.T) {
@@ -19,7 +18,7 @@ func TestGeodataDefaultsManualEditsAndOwnedSections(t *testing.T) {
 	if err := os.WriteFile(path, []byte(raw), 0640); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := bootstrap.Load(path)
+	cfg, err := testconfig.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +68,7 @@ func TestConcurrentGeodataSavesDoNotOverwriteEachOther(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# defaults\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(path, bootstrap.Defaults())
+	service, err := New(path, testconfig.Defaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +115,7 @@ func TestGeodataEditPreservesValidTOMLForms(t *testing.T) {
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := bootstrap.Load(path)
+			cfg, err := testconfig.Load(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +138,7 @@ func TestGeodataEditPreservesValidTOMLForms(t *testing.T) {
 			if !strings.Contains(string(next), "# keep") {
 				t.Fatal("comment lost")
 			}
-			loaded, err := bootstrap.Load(path)
+			loaded, err := testconfig.Load(path)
 			if err != nil || loaded.Geodata.MaxAssetSizeMB != 1024 {
 				t.Fatal("invalid edit", err)
 			}

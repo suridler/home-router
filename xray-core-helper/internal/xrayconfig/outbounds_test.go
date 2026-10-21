@@ -3,6 +3,7 @@ package xrayconfig
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ const outboundFixture = `{
   }
 }`
 
-const newURI = "vless://22222222-2222-4222-8222-222222222222@new.example:443?type=tcp&security=reality&pbk=k&sni=s.example&sid=ab"
+const nativeDraft = `{"protocol":"vless","settings":{"address":"new.example","port":443,"id":"22222222-2222-4222-8222-222222222222","encryption":"none"},"streamSettings":{"network":"tcp"}}`
 
 func plan(t *testing.T, planner transaction.Planner, source string) (string, error) {
 	t.Helper()
@@ -55,89 +56,89 @@ func rejectCode(err error) string {
 	return code
 }
 
-func TestAddVlessOutboundSetsEgressMarkAndKeepsDocument(t *testing.T) {
-	updated, err := plan(t, PlanAddVlessOutbound("edge-2", newURI), outboundFixture)
+func TestNativeOutboundCreatePreservesOtherObjects(t *testing.T) {
+	updated, err := plan(t, PlanWriteOutbound("edge-2", json.RawMessage(nativeDraft), "create"), outboundFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newEditorT(t, updated)
-	index, outbound := findOutbound(e.syntax, "edge-2")
+	parsed := newEditorT(t, updated).syntax
+	index, added := findOutbound(parsed, "edge-2")
 	if index != 6 {
-		t.Fatalf("new outbound index = %d", index)
+		t.Fatalf("index=%d", index)
 	}
-	stream := asMap(outbound["streamSettings"])
-	if mark, _ := asMap(stream["sockopt"])["mark"].(interface{ String() string }); mark == nil || mark.String() != "255" {
-		t.Fatalf("sockopt = %#v", stream["sockopt"])
+	mark := asMap(asMap(added["streamSettings"])["sockopt"])["mark"]
+	if n, ok := markInteger(mark); !ok || n != 255 {
+		t.Fatal("mark not inherited")
 	}
 	for _, kept := range []string{"// operator note stays", `"unknownOutbound": 1`, `"customKeep": true`} {
 		if !strings.Contains(updated, kept) {
-			t.Errorf("lost %q", kept)
+			t.Fatalf("lost %s", kept)
 		}
 	}
 }
-
-func TestAddVlessOutboundRejections(t *testing.T) {
-	tests := []struct {
-		name, tag, uri, code string
-	}{
-		{"duplicate", "extra", newURI, "outbound_exists"},
-		{"reserved", "block", newURI, "outbound_protected"},
-		{"bad tag", "bad tag!", newURI, "invalid_outbound_tag"},
-		{"route collision", "vless", newURI, "invalid_outbound_tag"},
-		{"bad uri", "edge-3", "https://x", "invalid_vless_uri"},
-		{"unsupported", "edge-3", newURI + "&weird=1", "unsupported_vless_parameters"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := plan(t, PlanAddVlessOutbound(test.tag, test.uri), outboundFixture); rejectCode(err) != test.code {
-				t.Fatalf("error = %v (%s); want %s", err, rejectCode(err), test.code)
+func TestNativeOutboundOperationBoundaries(t *testing.T) {
+	for _, tc := range []struct{ tag, raw, op, code string }{
+		{"extra", nativeDraft, "create", "outbound_exists"},
+		{"block", nativeDraft, "create", "outbound_protected"},
+		{"bad tag!", nativeDraft, "create", "invalid_outbound_tag"},
+		{"proxy", `{"protocol":"freedom"}`, "edit", "outbound_protocol_changed"},
+		{"proxy", `{"tag":"renamed","protocol":"vless"}`, "edit", "outbound_identity_changed"},
+		{"direct", nativeDraft, "replace", "outbound_protected"},
+		{"ghost", nativeDraft, "edit", "outbound_not_found"},
+		{"new", `null`, "create", "invalid_outbound"},
+	} {
+		t.Run(tc.tag+tc.op+tc.code, func(t *testing.T) {
+			_, err := plan(t, PlanWriteOutbound(tc.tag, json.RawMessage(tc.raw), tc.op), outboundFixture)
+			if rejectCode(err) != tc.code {
+				t.Fatalf("got %v want %s", err, tc.code)
 			}
 		})
 	}
 }
-
-func TestUpdateVlessOutboundPreservesSockoptAndTransportKey(t *testing.T) {
-	updated, err := plan(t, PlanUpdateVlessOutbound("proxy", newURI), outboundFixture)
+func TestNativeEditPreservesUnknownFieldsAndNestedComments(t *testing.T) {
+	source := strings.Replace(outboundFixture, `"address": "old.example"`, `/* server note */ "address": "old.example"`, 1)
+	parsed := newEditorT(t, source).syntax
+	_, current := findOutbound(parsed, "proxy")
+	asMap(asSlice(asMap(current["settings"])["vnext"])[0])["address"] = "changed.example"
+	raw, _ := json.Marshal(current)
+	updated, err := plan(t, PlanWriteOutbound("proxy", raw, "edit"), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newEditorT(t, updated)
-	_, outbound := findOutbound(e.syntax, "proxy")
-	stream := asMap(outbound["streamSettings"])
-	if stream["network"] != "tcp" || asMap(stream["sockopt"])["mark"] == nil {
-		t.Fatalf("stream = %#v", stream)
+	expected := strings.Replace(source, `"old.example"`, `"changed.example"`, 1)
+	if updated != expected {
+		t.Fatalf("edit changed unrelated bytes: %s", updated)
 	}
-	if strings.Contains(updated, "old.example") || !strings.Contains(updated, "new.example") {
-		t.Fatalf("settings not replaced:\n%s", updated)
-	}
-	if strings.Contains(updated, "customKeep") {
-		t.Log("customKeep is replaced with streamSettings as in the Node importer")
-	}
-	methodUpdated, err := plan(t, PlanUpdateVlessOutbound("extra", newURI), outboundFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, extra := findOutbound(newEditorT(t, methodUpdated).syntax, "extra")
-	if asMap(extra["streamSettings"])["method"] != "raw" {
-		t.Fatalf("method transport key not kept: %#v", extra["streamSettings"])
-	}
-	if !strings.Contains(methodUpdated, `"unknownOutbound": 1`) {
-		t.Fatal("unknown outbound field lost")
+	unchanged, err := plan(t, PlanWriteOutbound("proxy", raw, "edit"), updated)
+	if err != nil || unchanged != updated {
+		t.Fatal("no-op rewrote native JSONC")
 	}
 }
-
-func TestUpdateVlessOutboundRejections(t *testing.T) {
-	tests := []struct{ name, tag, code string }{
-		{"missing", "ghost", "outbound_not_found"},
-		{"not vless", "direct", "outbound_not_vless"},
-		{"dns outbound", "dns-out", "outbound_not_vless"},
+func TestReplacementRetainsOnlyTagAndRequiredMark(t *testing.T) {
+	source := strings.Replace(outboundFixture, `"tag": "proxy",`, `"tag": "proxy", "sendThrough":"192.0.2.1", "mux":{"enabled":true},`, 1)
+	updated, err := plan(t, PlanWriteOutbound("proxy", json.RawMessage(`{"protocol":"trojan","settings":{"address":"new.example","port":443,"password":"test"}}`), "replace"), source)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := plan(t, PlanUpdateVlessOutbound(test.tag, newURI), outboundFixture); rejectCode(err) != test.code {
-				t.Fatalf("error = %v; want %s", err, test.code)
-			}
-		})
+	_, current := findOutbound(newEditorT(t, updated).syntax, "proxy")
+	if current["sendThrough"] != nil || current["mux"] != nil {
+		t.Fatal("old options survived replacement")
+	}
+	stream := asMap(current["streamSettings"])
+	if len(stream) != 1 || len(asMap(stream["sockopt"])) != 1 || asMap(stream["sockopt"])["mark"] == nil {
+		t.Fatal("old stream survived replacement")
+	}
+	if current["tag"] != "proxy" || current["protocol"] != "trojan" {
+		t.Fatal("wrong replacement identity")
+	}
+}
+func TestOutboundChainPreventsRemoval(t *testing.T) {
+	source := strings.Replace(outboundFixture, `"customKeep": true`, `"customKeep": true, "sockopt": {"mark":255,"dialerProxy":"spare"}`, 1)
+	// Replace original sockopt instead of creating duplicate JSON keys.
+	source = strings.Replace(source, `"sockopt": { "mark": 255 }, `, "", 1)
+	_, err := plan(t, PlanDeleteOutbound("spare"), source)
+	if rejectCode(err) != "outbound_in_use" {
+		t.Fatalf("chain reference ignored: %v", err)
 	}
 }
 
@@ -167,7 +168,7 @@ func TestDeleteOutbound(t *testing.T) {
 }
 
 func TestMissingOutboundsArrayIsRejected(t *testing.T) {
-	_, err := plan(t, PlanAddVlessOutbound("edge-2", newURI), `{"routing":{}}`)
+	_, err := plan(t, PlanWriteOutbound("edge-2", json.RawMessage(nativeDraft), "create"), `{"routing":{}}`)
 	if rejectCode(err) != "invalid_config" {
 		t.Fatalf("error = %v", err)
 	}

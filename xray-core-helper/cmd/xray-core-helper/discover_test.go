@@ -1,15 +1,15 @@
 package main
 
 import (
+	"home-router/xray-core-helper/internal/testconfig"
 	"strings"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/xrayservice"
 )
 
 func TestDropInGrantsExactConfigDirectory(t *testing.T) {
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	i := xrayservice.Installation{Config: "/etc/custom xray/config.json", AssetDir: "/usr/local/share/xray"}
 	text, err := pathDropIn(i, cfg)
 	if err != nil || !strings.Contains(text, `ReadWritePaths="/etc/custom xray"`) || strings.Contains(text, "ReadWritePaths=\n") {

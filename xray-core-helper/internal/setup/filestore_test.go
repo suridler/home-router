@@ -5,6 +5,7 @@ import (
 	"home-router/xray-core-helper/internal/filemetadata"
 	"home-router/xray-core-helper/internal/nativeblock"
 	"home-router/xray-core-helper/internal/templatecatalog"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func fileStoreFixture(t *testing.T) (*fileStore, []templatecatalog.Entry, string
 		t.Fatal(err)
 	}
 	validated := 0
-	store, err := newFileStore(filepath.Join(root, "state"), entries, func(_ context.Context, _ templatecatalog.ID, path string) error {
+	store, err := newFileStore(filepath.Join(root, "state"), entries, testconfig.Defaults(), func(_ context.Context, _ templatecatalog.ID, path string) error {
 		validated++
 		if _, err := os.Stat(path); err != nil {
 			return err

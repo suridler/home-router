@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/pelletier/go-toml/v2"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/templatecatalog"
 )
@@ -24,7 +23,7 @@ func ConfigureNetwork(store SetupStore, path string) error {
 	if err != nil {
 		return err
 	}
-	s.configPath, s.network, s.userGeoip = path, c.Network, c.Geodata.UserGeoip
+	s.configPath, s.network, s.userGeoip, s.config = path, c.Network, c.Geodata.UserGeoip, c
 	return nil
 }
 
@@ -56,7 +55,7 @@ func (s *fileStore) prepareNetwork(m *setupManifest, plan Plan) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	encoded, err := toml.Marshal(c)
+	encoded, err := bootstrap.UpdateOverrides(prior, c, "network")
 	if err != nil {
 		return err
 	}
@@ -95,6 +94,6 @@ func (s *fileStore) manifestNetwork(m setupManifest) (bootstrap.NetworkConfig, e
 	if m.Network == nil {
 		return s.network, nil
 	}
-	c, err := bootstrap.Load(m.Network.Candidate)
+	c, err := bootstrap.LoadWithTemplate(m.Network.Candidate, bootstrap.TemplateFile)
 	return c.Network, err
 }

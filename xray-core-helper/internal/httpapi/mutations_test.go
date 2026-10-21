@@ -92,8 +92,8 @@ func TestServerRemainsReadOnlyAndServesHealthWhileRecoveryBlocksMutations(t *tes
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("health response = %d; want 200", response.StatusCode)
 	}
-	mutation := call(handler, http.MethodPost, "/v1/xray/outbounds/vless",
-		`{"expectedGeneration":1,"tag":"added","uri":"`+mutationURI+`"}`)
+	mutation := call(handler, http.MethodPost, "/v1/xray/outbound-drafts/apply",
+		`{"expectedGeneration":1,"outbound":{"tag":"added","protocol":"freedom"}}`)
 	if mutation.Code != http.StatusServiceUnavailable ||
 		errorCode(t, mutation) != "transaction_unavailable" {
 		t.Fatalf("mutation response = %d %s", mutation.Code, mutation.Body.String())
@@ -127,38 +127,44 @@ func generationOf(t *testing.T, response *httptest.ResponseRecorder) uint64 {
 	return payload.Generation
 }
 
-func TestVlessPreviewHidesCredentials(t *testing.T) {
-	handler, _ := newMutationServer(t)
-	body, _ := json.Marshal(api.VlessPreviewRequest{URI: mutationURI + "&weird=1"})
-	response := call(handler, http.MethodPost, "/v1/xray/outbounds/vless/preview", string(body))
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+func TestOutboundImportIsDraftOnlyAndErrorsDoNotLeak(t *testing.T) {
+	handler, path := newMutationServer(t)
+	before, _ := os.ReadFile(path)
+	uri := "vless://33333333-3333-4333-8333-333333333333@edge.example:443?type=tcp&security=tls&unknown=ignored"
+	body, _ := json.Marshal(api.OutboundImportRequest{URI: uri})
+	response := call(handler, http.MethodPost, "/v1/xray/outbound-drafts/import", string(body))
+	if response.Code != 200 || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("%d %s", response.Code, response.Body.String())
 	}
-	for _, secret := range []string{"33333333-3333", "secret-public-key", "feedbeef", "vless://"} {
-		if strings.Contains(response.Body.String(), secret) {
-			t.Errorf("preview leaked %q: %s", secret, response.Body.String())
-		}
+	var payload api.OutboundImportResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || len(payload.Warnings) != 1 || !strings.Contains(string(payload.Outbound), "33333333") {
+		t.Fatal("selected draft missing credentials/warning")
 	}
-	var preview api.VlessPreviewResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
-		t.Fatal(err)
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("import mutated config")
 	}
-	if preview.Address != "edge.example" || len(preview.UnsupportedParameters) != 1 || preview.UnsupportedParameters[0] != "weird" {
-		t.Fatalf("preview = %#v", preview)
+	bad := call(handler, http.MethodPost, "/v1/xray/outbound-drafts/import", `{"uri":"unknown://private-password"}`)
+	if bad.Code != 400 || strings.Contains(bad.Body.String(), "private-password") {
+		t.Fatal("unsafe import error")
 	}
-	bad := call(handler, http.MethodPost, "/v1/xray/outbounds/vless/preview", `{"uri":"https://x"}`)
-	if bad.Code != http.StatusBadRequest || errorCode(t, bad) != "invalid_vless_uri" {
-		t.Fatalf("bad preview = %d %s", bad.Code, bad.Body.String())
+	selected := call(handler, http.MethodGet, "/v1/xray/outbounds/proxy", "")
+	if selected.Code != 200 || selected.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("selected editor unavailable")
+	}
+	list := call(handler, http.MethodGet, "/v1/xray/outbounds", "")
+	if strings.Contains(list.Body.String(), "11111111-1111") {
+		t.Fatal("list leaked credentials")
 	}
 }
 
 func TestOutboundEndpointsEnforceGenerationAndProtection(t *testing.T) {
 	handler, configPath := newMutationServer(t)
-	add, _ := json.Marshal(api.AddVlessOutboundRequest{MutationRequest: api.MutationRequest{ExpectedGeneration: new(uint64)}, Tag: "edge-2", URI: mutationURI})
-	if generation := generationOf(t, call(handler, http.MethodPost, "/v1/xray/outbounds/vless", string(add))); generation != 1 {
+	add, _ := json.Marshal(api.OutboundWriteRequest{MutationRequest: api.MutationRequest{ExpectedGeneration: new(uint64)}, Outbound: json.RawMessage(`{"tag":"edge-2","protocol":"freedom"}`)})
+	if generation := generationOf(t, call(handler, http.MethodPost, "/v1/xray/outbound-drafts/apply", string(add))); generation != 1 {
 		t.Fatalf("generation = %d", generation)
 	}
-	if stale := call(handler, http.MethodPost, "/v1/xray/outbounds/vless", string(add)); stale.Code != http.StatusConflict || errorCode(t, stale) != "generation_conflict" {
+	if stale := call(handler, http.MethodPost, "/v1/xray/outbound-drafts/apply", string(add)); stale.Code != http.StatusConflict || errorCode(t, stale) != "generation_conflict" {
 		t.Fatalf("stale add = %d %s", stale.Code, stale.Body.String())
 	}
 	before, _ := os.ReadFile(configPath)
@@ -172,8 +178,8 @@ func TestOutboundEndpointsEnforceGenerationAndProtection(t *testing.T) {
 		{"trailing data", http.MethodDelete, "/v1/xray/outbounds/spare", `{"expectedGeneration":1}{}`, 400, "invalid_request"},
 		{"protected delete", http.MethodDelete, "/v1/xray/outbounds/proxy", `{"expectedGeneration":1}`, 403, "outbound_protected"},
 		{"protected tag delete", http.MethodDelete, "/v1/xray/outbounds/direct", `{"expectedGeneration":1}`, 403, "outbound_protected"},
-		{"update missing", http.MethodPut, "/v1/xray/outbounds/ghost/vless", `{"expectedGeneration":1,"uri":"` + mutationURI + `"}`, 404, "outbound_not_found"},
-		{"wrong method", http.MethodGet, "/v1/xray/outbounds/spare", ``, 405, "method_not_allowed"},
+		{"update missing", http.MethodPut, "/v1/xray/outbounds/ghost", `{"expectedGeneration":1,"outbound":{"protocol":"freedom"}}`, 404, "outbound_not_found"},
+		{"wrong method", http.MethodPatch, "/v1/xray/outbounds/spare", ``, 405, "method_not_allowed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -187,8 +193,8 @@ func TestOutboundEndpointsEnforceGenerationAndProtection(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("rejected requests changed the configuration")
 	}
-	update := `{"expectedGeneration":1,"uri":"` + mutationURI + `"}`
-	if generation := generationOf(t, call(handler, http.MethodPut, "/v1/xray/outbounds/proxy/vless", update)); generation != 2 {
+	update := `{"expectedGeneration":1,"outbound":{"protocol":"vless","settings":{"address":"new.example","port":443,"id":"33333333-3333-4333-8333-333333333333"}}}`
+	if generation := generationOf(t, call(handler, http.MethodPut, "/v1/xray/outbounds/proxy", update)); generation != 2 {
 		t.Fatalf("update generation = %d", generation)
 	}
 	if generation := generationOf(t, call(handler, http.MethodDelete, "/v1/xray/outbounds/spare", `{"expectedGeneration":2}`)); generation != 3 {
@@ -254,8 +260,8 @@ func TestValidationFailureLeavesConfigurationByteIdentical(t *testing.T) {
 	infoBefore, _ := os.Stat(configPath)
 	rule := `{"ruleTag":"user a","conditions":{"domain":["new.example"]},"outboundTag":"direct"}`
 	requests := []struct{ name, method, path, body string }{
-		{"add outbound", http.MethodPost, "/v1/xray/outbounds/vless", `{"expectedGeneration":0,"tag":"edge-2","uri":"` + mutationURI + `"}`},
-		{"update outbound", http.MethodPut, "/v1/xray/outbounds/proxy/vless", `{"expectedGeneration":0,"uri":"` + mutationURI + `"}`},
+		{"add outbound", http.MethodPost, "/v1/xray/outbound-drafts/apply", `{"expectedGeneration":0,"outbound":{"tag":"edge-2","protocol":"freedom"}}`},
+		{"update outbound", http.MethodPut, "/v1/xray/outbounds/proxy", `{"expectedGeneration":0,"outbound":{"protocol":"vless","settings":{"address":"new.example","port":443}}}`},
 		{"delete outbound", http.MethodDelete, "/v1/xray/outbounds/spare", `{"expectedGeneration":0}`},
 		{"add rule", http.MethodPost, "/v1/xray/routing/rules", `{"expectedGeneration":0,"rule":{"ruleTag":"new","conditions":{"domain":["n.example"]},"outboundTag":"direct"}}`},
 		{"edit rule", http.MethodPut, "/v1/xray/routing/rules/user%20a", `{"expectedGeneration":0,"rule":` + rule + `}`},

@@ -2,7 +2,6 @@
 
 const { LONG_OPERATION_TIMEOUT_MS } = require('./helper-client');
 
-const protectedOutboundTags = new Set(['proxy', 'direct', 'block', 'dns-out']);
 
 function createHelperMutationService({ helperClient }) {
   if (!helperClient || typeof helperClient.request !== 'function') throw new TypeError('helperClient is required');
@@ -10,48 +9,14 @@ function createHelperMutationService({ helperClient }) {
   const mutate = (method, path, body) => helperClient.request(method, path, { body, timeoutMs: LONG_OPERATION_TIMEOUT_MS });
   const result = (metadata, extra = {}) => ({ ...extra, ...metadata });
 
-  async function previewVlessImport(uri, outboundTag) {
-    return { outboundTag, ...(await mutate('POST', '/v1/xray/outbounds/vless/preview', { uri })) };
-  }
-
-  async function previewNewVlessOutbound(uri, tag) {
-    return { outboundTag: tag, ...(await mutate('POST', '/v1/xray/outbounds/vless/preview', { uri })) };
-  }
-
-  async function importVlessOutbound(uri, tag, restart, expectedGeneration) {
-    const metadata = await mutate('PUT', `/v1/xray/outbounds/${encodeURIComponent(tag)}/vless`, { uri, restart, expectedGeneration });
-    return result(metadata, { outboundTag: tag, restart });
-  }
-
-  async function addVlessOutbound(uri, tag, restart, expectedGeneration) {
-    const metadata = await mutate('POST', '/v1/xray/outbounds/vless', { uri, tag, restart, expectedGeneration });
-    return result(metadata, { outboundTag: tag, restart });
-  }
-
   async function deleteOutbound(tag, restart, expectedGeneration) {
     const metadata = await mutate('DELETE', `/v1/xray/outbounds/${encodeURIComponent(tag)}`, { restart, expectedGeneration });
     return result(metadata, { outboundTag: tag, restart });
   }
 
   async function getOutboundReferences(tag) {
-    const [outbounds, routing] = await Promise.all([
-      helperClient.request('GET', '/v1/xray/outbounds'),
-      helperClient.request('GET', '/v1/xray/routing')
-    ]);
-    if (!(outbounds.outbounds || []).some(outbound => outbound.tag === tag)) {
-      const error = new Error(`Outbound '${tag}' was not found`);
-      error.code = 'outbound_not_found';
-      error.statusCode = 404;
-      throw error;
-    }
-    const references = [];
-    for (const rule of routing.rules || []) {
-      if (rule.outboundTag === tag) references.push({ path: `routing.rules[${rule.index - 1}].outboundTag`, label: rule.tag || `rule ${rule.index}` });
-    }
-    for (const [index, balancer] of (routing.balancers || []).entries()) {
-      if ((balancer.selector || []).includes(tag)) references.push({ path: `routing.balancers[${index}].selector`, label: balancer.tag || `balancer ${index + 1}` });
-    }
-    return { outboundTag: tag, protected: protectedOutboundTags.has(tag), references };
+    const response = await helperClient.request('GET', `/v1/xray/outbounds/${encodeURIComponent(tag)}/references`);
+    return { ...response, outboundTag: response.tag, references: response.references.map(path => ({ path, label: path })) };
   }
 
   function ruleInput(input) {
@@ -89,18 +54,26 @@ function createHelperMutationService({ helperClient }) {
     return mutate('POST', '/v1/xray/routing/rules/clone', { position, ruleTag, restart, expectedGeneration });
   }
 
+  async function importOutbound(uri) {
+    return mutate('POST', '/v1/xray/outbound-drafts/import', { uri });
+  }
+  async function editOutbound(tag) {
+    return helperClient.request('GET', `/v1/xray/outbounds/${encodeURIComponent(tag)}`);
+  }
+  async function writeOutbound(operation, tag, outbound, restart, expectedGeneration, confirmReplacement) {
+    const path = operation === 'create' ? '/v1/xray/outbound-drafts/apply' : `/v1/xray/outbounds/${encodeURIComponent(tag)}${operation === 'replace' ? '/replace' : ''}`;
+    return mutate(operation === 'edit' ? 'PUT' : 'POST', path, { outbound, restart, expectedGeneration, confirmReplacement: confirmReplacement === true });
+  }
+
   return {
+    importOutbound, editOutbound, writeOutbound,
     addRoutingRule,
-    addVlessOutbound,
     cloneRoutingRule,
     deleteOutbound,
     deleteRoutingRule,
     editRoutingRule,
     getOutboundReferences,
-    importVlessOutbound,
     moveRoutingRule,
-    previewNewVlessOutbound,
-    previewVlessImport
   };
 }
 

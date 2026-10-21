@@ -3,6 +3,7 @@ package loggingservice
 import (
 	"context"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -463,7 +464,7 @@ func newService(
 	if err := engine.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(engine, preparer, noOpRotationPreparer{})
+	service, err := New(engine, preparer, noOpRotationPreparer{}, testconfig.Defaults().Logging)
 	if err != nil {
 		t.Fatal(err)
 	}

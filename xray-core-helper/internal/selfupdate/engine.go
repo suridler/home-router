@@ -61,8 +61,7 @@ type Engine struct {
 	Releases        *updaterelease.Client
 	ConfigPath      string
 	InstallerSource string
-	// ResolveAssets is a read-only systemd discovery hook; nil uses the config
-	// projection in filesystem-only tests.
+	// ResolveAssets is a read-only systemd discovery hook.
 	ResolveAssets func(context.Context) (string, error)
 	Setup         func(context.Context) error
 	// Check is injectable for hermetic service verification, never HTTP input.
@@ -215,11 +214,6 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 	} else {
 		webEnabled = true
 	}
-	if !fresh {
-		if err = e.Preflight(ctx); err != nil {
-			return nil, err
-		}
-	}
 	op := &Operation{SchemaVersion: 1, ID: ID(), SourceVersion: m.Version, TargetVersion: version, Arch: runtime.GOARCH, Fresh: fresh, Web: webEnabled, State: "preparing", Stage: "download", CreatedAt: time.Now().UTC(), ConfigPath: e.ConfigPath}
 	if reprepare {
 		op.ID = previous.ID
@@ -273,12 +267,15 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 			return fail(err)
 		}
 	}
-	// Resolve Xray and validate installation settings before stopping services.
-	configInput := e.Files.Path(e.ConfigPath)
-	if _, err = os.Stat(configInput); os.IsNotExist(err) {
-		configInput = filepath.Join(bundleDir, "xray-core-helper/config.example.toml")
+	// Use the downloaded defaults before any service or installed file changes.
+	if err = e.preflight(ctx, bundleDir); err != nil {
+		return fail(err)
 	}
-	paths, err := e.Runner.Run(ctx, e.InstallerSource, "-config", configInput, "discover-xray", "--systemd")
+	configInput, err := e.prepareSettings(op, bundleDir)
+	if err != nil {
+		return fail(err)
+	}
+	paths, err := e.Runner.Run(ctx, e.InstallerSource, "-defaults", filepath.Join(filepath.Dir(configInput), "defaults.toml"), "-config", configInput, "discover-xray", "--systemd")
 	if err != nil {
 		return fail(errors.New("xray_installation_unavailable"))
 	}
@@ -329,11 +326,30 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 	return op, nil
 }
 
-func (e *Engine) Preflight(ctx context.Context) error {
-	cfg, err := bootstrap.Load(e.Files.Path(e.ConfigPath))
-	if os.IsNotExist(err) {
-		return nil
+func (e *Engine) Preflight(ctx context.Context) error { return e.preflight(ctx, "") }
+
+// loadConfig uses target defaults during installation, before they are published.
+// An older bundle has no helper defaults file and uses the installed template.
+func (e *Engine) loadConfig(bundle string) (bootstrap.Config, error) {
+	template := e.Files.Path(bootstrap.DefaultTemplatePath)
+	if bundle != "" {
+		target := filepath.Join(bundle, "xray-core-helper/templConf/config.toml")
+		if _, err := os.Stat(target); err == nil {
+			template = target
+		} else if !os.IsNotExist(err) {
+			return bootstrap.Config{}, err
+		}
 	}
+	return bootstrap.LoadWithTemplate(e.Files.Path(e.ConfigPath), template)
+}
+
+func (e *Engine) preflight(ctx context.Context, bundle string) error {
+	if _, err := os.Stat(e.Files.Path(e.ConfigPath)); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	cfg, err := e.loadConfig(bundle)
 	if err != nil {
 		return errors.New("settings_invalid")
 	}
@@ -433,7 +449,7 @@ func (e *Engine) Request(ctx context.Context, id, action, actionID string) (*Ope
 		return nil, errors.New("snapshot_unavailable")
 	}
 	if action != "rollback" {
-		if err = e.Preflight(ctx); err != nil {
+		if err = e.preflight(ctx, filepath.Join(e.Store.Dir(op.ID), "bundle")); err != nil {
 			return nil, err
 		}
 	}
@@ -671,7 +687,7 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 		}
 	}()
 	if a.Action != "rollback" {
-		if err = e.Preflight(ctx); err != nil {
+		if err = e.preflight(ctx, filepath.Join(e.Store.Dir(op.ID), "bundle")); err != nil {
 			return err
 		}
 		bundle := filepath.Join(e.Store.Dir(op.ID), "bundle")
@@ -684,7 +700,7 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 				return err
 			}
 			dataPaths := []string{"/etc/xray-core-helper", "/var/lib/xray-core-helper", e.ConfigPath}
-			if cfg, err := bootstrap.Load(e.Files.Path(e.ConfigPath)); err == nil {
+			if cfg, err := e.loadConfig(bundle); err == nil {
 				dataPaths = append(dataPaths, cfg.Storage.Database, cfg.Storage.Database+"-wal", cfg.Storage.Database+"-shm")
 			}
 			all := pathsFor(Targets(bundle, op.Web), append(dataPaths, "/etc/systemd/system/xray-core-helper.service.d/20-installation-paths.conf")...)
@@ -801,6 +817,35 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 	return e.Store.Save(op)
 }
 
+func (e *Engine) prepareSettings(op *Operation, bundle string) (string, error) {
+	path := filepath.Join(e.Store.Dir(op.ID), "settings", "config.toml")
+	raw, err := os.ReadFile(e.Files.Path(e.ConfigPath))
+	if os.IsNotExist(err) {
+		raw, err = os.ReadFile(filepath.Join(bundle, "xray-core-helper/config.example.toml"))
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := atomicWrite(path, raw, 0600); err != nil {
+		return "", err
+	}
+	template := filepath.Join(bundle, "xray-core-helper/templConf/config.toml")
+	defaults, err := os.ReadFile(template)
+	if os.IsNotExist(err) {
+		defaults, err = os.ReadFile(e.Files.Path(bootstrap.DefaultTemplatePath))
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := atomicWrite(filepath.Join(filepath.Dir(path), "defaults.toml"), defaults, 0600); err != nil {
+		return "", err
+	}
+	if _, err := bootstrap.LoadWithTemplate(path, filepath.Join(filepath.Dir(path), "defaults.toml")); err != nil {
+		return "", errors.New("settings_invalid")
+	}
+	return path, nil
+}
+
 func (e *Engine) initialize(ctx context.Context, op *Operation, bundle string) error {
 	var err error
 	h := filepath.Join(bundle, "xray-core-helper")
@@ -838,7 +883,7 @@ func (e *Engine) verify(ctx context.Context, op *Operation) error {
 }
 
 func (e *Engine) verifyServices(ctx context.Context, op *Operation, checkWeb bool) error {
-	cfg, err := bootstrap.Load(e.Files.Path(e.ConfigPath))
+	cfg, err := e.verificationConfig(op)
 	if err != nil {
 		return errors.New("verify_settings_failed")
 	}
@@ -891,6 +936,19 @@ func (e *Engine) verifyServices(ctx context.Context, op *Operation, checkWeb boo
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+func (e *Engine) verificationConfig(op *Operation) (bootstrap.Config, error) {
+	template := e.Files.Path(bootstrap.DefaultTemplatePath)
+	// A restored pre-template release has its defaults in its binary and a full
+	// user config. Use the saved installation template only to read that config
+	// for health checks; never install it into the restored release.
+	if len(op.Attempts) > 0 && op.Attempts[len(op.Attempts)-1].Action == "rollback" {
+		if _, err := os.Stat(template); os.IsNotExist(err) {
+			template = filepath.Join(e.Store.Dir(op.ID), "settings", "defaults.toml")
+		}
+	}
+	return bootstrap.LoadWithTemplate(e.Files.Path(e.ConfigPath), template)
 }
 func errorCode(err error) string {
 	for _, item := range []struct {

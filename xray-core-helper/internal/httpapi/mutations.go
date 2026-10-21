@@ -12,7 +12,6 @@ import (
 	"home-router/xray-core-helper/internal/fault"
 	"home-router/xray-core-helper/internal/jsonrequest"
 	"home-router/xray-core-helper/internal/transaction"
-	"home-router/xray-core-helper/internal/vless"
 	"home-router/xray-core-helper/internal/xrayconfig"
 )
 
@@ -79,52 +78,6 @@ func runMutation(w http.ResponseWriter, r *http.Request, service ConfigService, 
 }
 
 func registerMutations(mux *http.ServeMux, service ConfigService) {
-	mux.HandleFunc("/v1/xray/outbounds/vless/preview", methods(map[string]http.HandlerFunc{
-		http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
-			request, ok := decodeBody[api.VlessPreviewRequest](w, r)
-			if !ok {
-				return
-			}
-			parsed, err := vless.Parse(request.URI, vless.TransportKeyNetwork)
-			if err != nil {
-				writeAPIError(w, http.StatusBadRequest, "invalid_vless_uri", err.Error())
-				return
-			}
-			preview := parsed.Preview
-			writeJSON(w, http.StatusOK, api.VlessPreviewResponse{
-				Address: preview.Address, Port: preview.Port, Transport: preview.Transport,
-				Security: preview.Security, Flow: preview.Flow, ServerName: preview.ServerName,
-				UnsupportedParameters: preview.UnsupportedParameters,
-			})
-		},
-	}))
-	mux.HandleFunc("/v1/xray/outbounds/vless", methods(map[string]http.HandlerFunc{
-		http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
-			request, ok := decodeBody[api.AddVlessOutboundRequest](w, r)
-			if !ok {
-				return
-			}
-			runMutation(w, r, service, request.MutationRequest, xrayconfig.PlanAddVlessOutbound(request.Tag, request.URI))
-		},
-	}))
-	mux.HandleFunc("/v1/xray/outbounds/{tag}/vless", methods(map[string]http.HandlerFunc{
-		http.MethodPut: func(w http.ResponseWriter, r *http.Request) {
-			request, ok := decodeBody[api.UpdateVlessOutboundRequest](w, r)
-			if !ok {
-				return
-			}
-			runMutation(w, r, service, request.MutationRequest, xrayconfig.PlanUpdateVlessOutbound(r.PathValue("tag"), request.URI))
-		},
-	}))
-	mux.HandleFunc("/v1/xray/outbounds/{tag}", methods(map[string]http.HandlerFunc{
-		http.MethodDelete: func(w http.ResponseWriter, r *http.Request) {
-			request, ok := decodeBody[api.MutationRequest](w, r)
-			if !ok {
-				return
-			}
-			runMutation(w, r, service, request, xrayconfig.PlanDeleteOutbound(r.PathValue("tag")))
-		},
-	}))
 	mux.HandleFunc("/v1/xray/routing/rules", methods(map[string]http.HandlerFunc{
 		http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
 			request, ok := decodeBody[api.AddRuleRequest](w, r)

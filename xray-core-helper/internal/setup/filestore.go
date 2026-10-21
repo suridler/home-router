@@ -50,6 +50,7 @@ type fileStore struct {
 	assetDir        string
 	geositeBuilder  string
 	configPath      string
+	config          bootstrap.Config
 	network         bootstrap.NetworkConfig
 	validateAssets  func(context.Context, string, string) error
 }
@@ -90,37 +91,41 @@ func NewFileStore(root string, validator interface {
 	if validator == nil {
 		return nil, errors.New("setup validator is required")
 	}
-	return NewFileStoreWithCatalog(root, validator, templatecatalog.Default(), geodatalimits.DefaultAssetSizeMB, assetDirs...)
+	config, err := bootstrap.ReadDefaults(bootstrap.TemplateFile)
+	if err != nil {
+		return nil, err
+	}
+	return NewFileStoreWithCatalog(root, validator, templatecatalog.Default(), config, assetDirs...)
 }
 
 func NewFileStoreWithCatalog(root string, validator interface {
 	Validate(context.Context, templatecatalog.ID, string) (templatevalidation.Result, error)
-}, catalog templatecatalog.Catalog, maxAssetSizeMB int, assetDirs ...string) (SetupStore, error) {
+}, catalog templatecatalog.Catalog, config bootstrap.Config, assetDirs ...string) (SetupStore, error) {
 	if validator == nil {
 		return nil, errors.New("setup validator is required")
 	}
-	store, err := newFileStore(root, catalog.Entries(), func(ctx context.Context, id templatecatalog.ID, path string) error {
+	store, err := newFileStore(root, catalog.Entries(), config, func(ctx context.Context, id templatecatalog.ID, path string) error {
 		_, err := validator.Validate(ctx, id, path)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !geodatalimits.ValidMB(maxAssetSizeMB) {
+	if !geodatalimits.ValidMB(config.Geodata.MaxAssetSizeMB) {
 		return nil, errors.New("invalid geodata size limit")
 	}
-	store.maxAssetSize = geodatalimits.Bytes(maxAssetSizeMB)
+	store.maxAssetSize = geodatalimits.Bytes(config.Geodata.MaxAssetSizeMB)
 	store.metadata = filemetadata.Destination
 	store.identity = xrayidentity.New().GID
 	store.checkRelations = true
-	assetDir := "/usr/local/share/xray"
+	assetDir := config.Xray.AssetDir
 	if len(assetDirs) > 0 {
 		assetDir = assetDirs[0]
 	}
 	if !filepath.IsAbs(assetDir) || filepath.Clean(assetDir) != assetDir {
 		return nil, errors.New("invalid asset directory")
 	}
-	binary := "/usr/local/bin/xray"
+	binary := config.Xray.Binary
 	if len(assetDirs) > 1 {
 		binary = assetDirs[1]
 	}
@@ -131,7 +136,7 @@ func NewFileStoreWithCatalog(root string, validator interface {
 		}
 		store.userGeosite = assetDirs[2]
 	}
-	builder := "/usr/local/bin/domain-list-community"
+	builder := config.Geodata.Builder
 	if len(assetDirs) > 3 {
 		builder = assetDirs[3]
 	}
@@ -146,11 +151,11 @@ func NewFileStoreWithCatalog(root string, validator interface {
 	}
 	return store, nil
 }
-func newFileStore(root string, entries []templatecatalog.Entry, validate validateFunc) (*fileStore, error) {
+func newFileStore(root string, entries []templatecatalog.Entry, config bootstrap.Config, validate validateFunc) (*fileStore, error) {
 	if !filepath.IsAbs(root) || len(entries) == 0 || validate == nil {
 		return nil, errors.New("invalid setup file store")
 	}
-	return &fileStore{maxAssetSize: geodatalimits.DefaultAssetSize, root: root, entries: append([]templatecatalog.Entry(nil), entries...), validate: validate, now: time.Now, workingMetadata: filemetadata.Working, userGeosite: bootstrap.DefaultUserGeositeName, userGeoip: bootstrap.DefaultUserGeoipName, network: bootstrap.Defaults().Network}, nil
+	return &fileStore{maxAssetSize: geodatalimits.Bytes(config.Geodata.MaxAssetSizeMB), root: root, entries: append([]templatecatalog.Entry(nil), entries...), validate: validate, now: time.Now, workingMetadata: filemetadata.Working, userGeosite: config.Geodata.UserGeosite, userGeoip: config.Geodata.UserGeoip, network: config.Network, config: config}, nil
 }
 func (s *fileStore) Prepare(ctx context.Context, plan Plan) (SetupTransaction, error) {
 	s.mu.Lock()
@@ -352,7 +357,7 @@ func (t *fileTransaction) Validate(ctx context.Context) error {
 			continue
 		}
 		if item.ID == networkID {
-			if _, err := bootstrap.Load(item.Candidate); err != nil {
+			if _, err := bootstrap.LoadWithTemplate(item.Candidate, bootstrap.TemplateFile); err != nil {
 				return err
 			}
 		} else if item.ID == templatecatalog.XrayConfig {
@@ -658,7 +663,7 @@ func renderNative(id templatecatalog.ID, raw []byte, plan Plan, userGeosite ...s
 		if plan.PreserveXray && plan.Gateway == nil {
 			return append([]byte(nil), raw...), nil
 		}
-		name := bootstrap.DefaultUserGeositeName
+		name := ""
 		if len(userGeosite) > 0 {
 			name = userGeosite[0]
 		}
@@ -682,9 +687,6 @@ func renderNative(id templatecatalog.ID, raw []byte, plan Plan, userGeosite ...s
 			}
 		default:
 			n := plan.network
-			if n.InterceptMark == 0 {
-				n = bootstrap.Defaults().Network
-			}
 			n.Interface, n.Address, n.IPv4Prefix = plan.Interface, plan.ListenAddress, plan.LANNetwork
 			return n.BindingValue(source)
 		}

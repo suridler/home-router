@@ -139,7 +139,7 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	if err != nil {
 		return nil, err
 	}
-	logMutationService, err := loggingservice.New(engine, logPreparer, logRotationService)
+	logMutationService, err := loggingservice.New(engine, logPreparer, logRotationService, a.config.Logging)
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +150,10 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	if err := logMutationService.SetSettings(settingsService, func(values bootstrap.LoggingConfig) (loggingservice.FilePreparer, error) {
 		access, errorPath := values.AccessPath, values.ErrorPath
 		if access == "" || access == "none" {
-			access = logfileprep.AccessLogPath
+			access = values.AccessFilePath
 		}
 		if errorPath == "" || errorPath == "none" {
-			errorPath = logfileprep.ErrorLogPath
+			errorPath = values.ErrorFilePath
 		}
 		return logfileprep.NewWithPaths(identityResolver, nil, access, errorPath)
 	}); err != nil {

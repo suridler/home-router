@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -66,7 +67,7 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 	writeLifecycleFile(t, env.fs.Path("/usr/local/sbin/xray-core-helperd"), "old daemon")
 	writeLifecycleFile(t, env.fs.Path("/etc/xray-core-helper/helper.env"), "XRAY_HELPER_WEB_ENABLED=1\n")
 	writeLifecycleFile(t, env.e.InstallerSource, "saved installer")
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	dbPath := env.fs.Path(cfg.Storage.Database)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		t.Fatal(err)
@@ -104,7 +105,17 @@ func TestLocalBundleUpdateAndExplicitRollbackRestoreData(t *testing.T) {
 	if op.Fresh || !op.Web || op.State != "prepared" {
 		t.Fatalf("wrong operation: %#v", op)
 	}
+	originalSettings := readLifecycleFile(t, env.fs.Path(bootstrap.DefaultConfigPath))
 	env.e.Check = func(context.Context, *Operation) error {
+		if got := readLifecycleFile(t, env.fs.Path(bootstrap.DefaultTemplatePath)); got != lifecycleCandidateFiles["xray-core-helper/templConf/config.toml"] {
+			t.Fatal("factory defaults not delivered")
+		}
+		if got := readLifecycleFile(t, env.fs.Path(bootstrap.DefaultConfigPath)); got != originalSettings {
+			t.Fatal("user overrides changed")
+		}
+		if _, err := os.Stat(env.fs.Path("/etc/xray-core-helper/templConf/config.toml")); !os.IsNotExist(err) {
+			t.Fatal("unexpected working copy of helper defaults", err)
+		}
 		for _, name := range shipped {
 			path := env.fs.Path("/etc/xray-core-helper/templConf/" + name)
 			if got := readLifecycleFile(t, path); got != lifecycleCandidateFiles["xray-core-helper/templConf/"+name] {
@@ -221,7 +232,7 @@ func TestWebWaitsForHelperBeforeStarting(t *testing.T) {
 		}
 	}))
 	defer web.Close()
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	cfg.Server.Socket = filepath.Join(t.TempDir(), "h.sock")
 	host, port, err := net.SplitHostPort(strings.TrimPrefix(web.URL, "http://"))
 	if err != nil {
@@ -380,5 +391,41 @@ func TestExplicitOlderAndSameLocalVersions(t *testing.T) {
 		if err != nil || installed.Version != version {
 			t.Fatalf("target=%s: %#v %v", version, installed, err)
 		}
+	}
+}
+
+func TestPrepareSettingsUsesBundleDefaultsBeforeFactoryExists(t *testing.T) {
+	env := newLifecycleEnv(t)
+	op := makeLifecycleOperation(t, env, "prepared", false, false)
+	if err := os.Remove(env.fs.Path(bootstrap.DefaultTemplatePath)); err != nil {
+		t.Fatal(err)
+	}
+	original := "# operator overrides\n[web]\nport = 3100\n"
+	writeLifecycleFile(t, env.fs.Path(bootstrap.DefaultConfigPath), original)
+	bundle := filepath.Join(env.e.Store.Dir(op.ID), "bundle")
+	path, err := env.e.prepareSettings(op, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := bootstrap.LoadWithTemplate(path, filepath.Join(filepath.Dir(path), "defaults.toml"))
+	if err != nil || cfg.Web.Port != 3100 {
+		t.Fatalf("bundle overlay: %v %v", cfg.Web, err)
+	}
+	if readLifecycleFile(t, env.fs.Path(bootstrap.DefaultConfigPath)) != original {
+		t.Fatal("preparation changed installed overrides")
+	}
+	if len(env.runner.calls) != 0 {
+		t.Fatal("preparation invoked services")
+	}
+	// The restored old release has no factory template. Health verification must
+	// still read its full settings without changing the restored installation.
+	op.Attempts = append(op.Attempts, Attempt{Action: "rollback"})
+	cfg, err = env.e.verificationConfig(op)
+	if err != nil || cfg.Web.Port != 3100 {
+		t.Fatalf("rollback verification: %v %v", cfg.Web, err)
+	}
+	op.Attempts[len(op.Attempts)-1].Action = "install"
+	if _, err := env.e.verificationConfig(op); err == nil {
+		t.Fatal("missing installed defaults silently accepted")
 	}
 }

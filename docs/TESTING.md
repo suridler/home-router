@@ -391,3 +391,159 @@ Beta.5 `89860dd`: helper/web/Xray/TProxy активны; внешние исто
 
 Проверки используют временные файлы, Unix sockets и fake services. Работающие
 службы, сеть, Xray config и установленный комплект хоста не изменялись.
+
+## Уточнение серверной приёмки — 21 октября 2026
+
+По подтверждению пользователя прерывание установки уже воспроизводилось
+на этом рабочем сервере; после этого менялся таймер отката. Не учитывать
+прерывание как никогда не проверявшийся сценарий. Повтор после изменения
+механизма отмечать отдельно как регрессию с указанием проверенной версии.
+Это подтверждение не закрывает всю матрицу downgrade/retry/rollback.
+
+## Beta.7: обновление рабочего сервера через web — 21 октября 2026
+
+Релиз `helper-v0.2.0-beta.7`, commit `8f615e972cdae8a3c7141d54ac1c04e2e323da7c`.
+GitHub Actions run `39595783387` завершился успешно; опубликованы все шесть
+assets, SHA256SUMS содержит четыре записи для архивов и raw CLI.
+Пользователь подтвердил обновление этого сервера через web.
+
+После обновления непосредственно проверены: health `ok`, версия
+`helper-v0.2.0-beta.7+8f615e972cda`, active у Xray, TProxy routing, helper и web,
+`safe-apply status` возвращает `pending: null`. Проверки только читают состояние.
+Пользователь отдельно подтвердил через web-панель на beta.7: проверку панели,
+обновление геобаз и добавление/удаление динамических ресурсов — выполнено.
+Основание — подтверждение оператора; отдельные audit ID не передавались.
+Native safe-apply при изменении путей Xray и оставшаяся матрица отказов
+этим подтверждением не закрываются.
+
+## Beta.7: проверки чтением на рабочем сервере — 21 октября 2026
+
+Evidence: `/tmp/helper-beta7-readonly-2t0abvoa` (приватный каталог; временный,
+не включать его содержимое в репозиторий). Конфигурация, службы, маршруты,
+динамический список и геобазы в этой проверке не изменялись.
+
+- Health beta.7 `ok`, четыре службы active, ExecMainStatus=0, pending отсутствует.
+- Helper overview, exporter metadata, templates, errors, network probe status,
+  geodata status, settings и proxy domains: HTTP 200. Overview configState=parsed.
+- Web index и семь проверенных GET API: HTTP 200; данные трафика доступны,
+  trafficSource=xray-routing-exporter, trafficError=null.
+- Exporter healthz/readyz/metrics и `/api/v1/xray/stats`: HTTP 200, up=true,
+  12 счётчиков. Первоначальный пробный `/api/stats` дал ожидаемый 404:
+  это неверный путь проверки, рабочий endpoint доступен.
+- Три native-шаблона synchronized. Xray-шаблон different, как ранее оставлено
+  оператором; только это вызывает templates_different и HTTP 503 у ready.
+  Config/database/Xray API/recovery checks — ready.
+- Последнее обновление геобаз succeeded: 21.10.2026 17:08:00 +05,
+  issues пуст, recovery clean. Следующий запуск 22.10.2026 04:00 +05;
+  ежедневное обновление включено.
+- Desired/baseline пусты, consolidationActive=false. Xray API возвращает
+  12 правил, включая обе permanent USERLIST; динамический overlay отсутствует,
+  что соответствует пустому desired. Данные не добавлялись и не удалялись.
+- Policy rule fwmark=1/table=100 и local default dev lo присутствуют.
+  HTTPS generate_204 вернул HTTP 204 за 0.165 с; LAN forwarding не проверялся.
+- SHA256 обоих архивов и raw CLI совпадают с опубликованным SHA256SUMS.
+  Metadata обеих архитектур указывает beta.7. Установленные CLI,
+  `/usr/local/sbin/xray-core-helperd` и domain-list-community совпадают
+  с amd64 manifest. Ошибка первоначального поиска metadata исправлена
+  в локальном проверочном скрипте: release.json лежит в корне архива.
+- Изолированные TestNativeOperationsDoNotDependOnXrayPaths и
+  TestNativeRecoveryStillChecksTransactionPhase — PASS (временная SQLite,
+  изменённые/недоступные пути, без обращения к рабочим службам).
+- В доступном journal с момента запуска beta.7 нет сообщений с приоритетом
+  warning/error или текстовых признаков ошибок. В сохранённой helper истории
+  все 100 записей — Xray `proxy/dns: can only hijack A/AAAA records`,
+  с 16:29:12 до 17:10:51 +05. Это отдельное замечание к DNS-поведению;
+  причина в этой проверке не устанавливалась, конфигурация не исправлялась.
+
+### M13: defaults и пользовательские переопределения (21.10.2026)
+
+Изолированные проверки реализации в рабочем дереве:
+
+- `gofmt -d ./cmd ./internal`, `go test ./...`, `go test -race ./...`,
+  `go build ./cmd/...`, `go vet ./...` — PASS.
+- `python3 -B -m unittest discover -s packaging -p 'test_*.py'` — PASS, 67 тестов.
+- `bash -n packaging/install-bundle.sh`, `sh -n packaging/install-templconf.sh`
+  и `git diff --check` — PASS.
+- Покрыты все разделы TOML: наложение вложенных ключей и списков, явные
+  false/empty, сохранение отличий и удаление равных defaults значений,
+  сохранение остальных разделов и комментариев, смена заводских defaults,
+  ошибка отсутствующего/неполного шаблона без Go fallback.
+- Установочные fixtures проверяют defaults из комплекта до появления файла
+  в `/usr/share/xray-core-helper/templConf/config.toml`, сохранение пользовательского
+  TOML, доставку только заводской копии и чтение настроек при откате старого комплекта.
+
+Рабочие службы, пользовательский TOML и сеть этим прогоном не менялись.
+Установка M13 на сервере остаётся отдельной приёмкой.
+
+
+### O14.1: изолированная оценка импорта outbound (21.10.2026)
+
+- Рабочий каталог испытания: `/tmp/helper-o14-kli8hikg`; копии helper и
+  libXray `75ccb623c807a1113a064278e3e544b0049c16a5`, MIT; core
+  `92ccc939aaf4`. Основные go.mod/go.sum не менялись, библиотека не подключена.
+- Обе сборки CLI: `GOTOOLCHAIN=go1.27.2 CGO_ENABLED=0 go build -trimpath
+  -ldflags='-s -w' -o <отдельный-output> ./cmd/xray-core-helper` — PASS.
+  Baseline: 13 975 712 байт; с прямым импортом share: 38 039 712 байт.
+  Детерминированный gzip: 5 867 490 / 14 626 513 байт соответственно.
+- `go list -deps` для CLI: нестандартных пакетов 79 / 499; модулей 11 / 56
+  (с собственным модулем). Это граф сборки, не оценка памяти работающего daemon.
+- В копии helper `GOTOOLCHAIN=go1.27.2 CGO_ENABLED=0 go test
+  ./cmd/xray-core-helper -run '^TestO14' -count=1 -v` — PASS:
+  три группы проверок, 24 протокольных/транспортных подслучая и отдельная
+  проверка неизвестного параметра. Использованы только искусственные значения
+  и `proxy.example`; реальные соединения не выполнялись.
+- Проверен импорт VLESS, VMess AEAD, Trojan, SS, SOCKS и Hysteria2;
+  отклонение HTTP/WireGuard URI и legacy VMess Base64(JSON). Первоначальный
+  fixture SOCKS с plain user:pass отклонён: исходники требуют Base64(user:pass).
+  Добавлены отдельные positive Base64 и negative plain случаи; повтор — PASS.
+- Проверены RAW/TCP, WS/WebSocket, gRPC, HTTPUpgrade, XHTTP/SplitHTTP,
+  KCP/mKCP; HTTP/H2/QUIC/gun отклоняются. Неизвестный URI-параметр
+  библиотека молча отбрасывает — это ограничение upstream, не принятая
+  семантика helper. Для адаптера нужны явные сообщения о неподдержанном.
+- Upstream `GOTOOLCHAIN=go1.27.2 CGO_ENABLED=0 go test ./share` — PASS (6.978 с).
+- `git diff --check` — PASS.
+- Основной код O14 и серверные службы не менялись. После оценки альтернатив
+  пользователь согласовал прямой pinned `libXray/share`, Go 1.27.2 и увеличение
+  бинарника примерно на 23 МБ. Решение зафиксировано в O14.1 ROADMAP;
+  реализация адаптера и подключение зависимости ещё не выполнены.
+
+
+### O14: native outbound editor, API/web/CLI (21.10.2026)
+
+Локальная реализация использует `github.com/xtls/libxray/share` v1.261017.0
+(commit `75ccb623c807`) и Xray-core `92ccc939aaf4`, Go 1.27.2.
+В отличие от изолированной оценки O14.1 зависимость теперь включена в основной
+модуль; собственные VLESS-парсеры Go/JS и VLESS-only endpoints удалены.
+
+Проверки из `xray-core-helper`, последовательно:
+
+- `gofmt -d ./cmd ./internal` — PASS, без вывода;
+- `GOTOOLCHAIN=go1.27.2 go test ./...` — PASS, 57 пакетов с тестами;
+- `GOTOOLCHAIN=go1.27.2 go test -race ./...` — PASS;
+- `GOTOOLCHAIN=go1.27.2 go build ./cmd/...` — PASS;
+- `GOTOOLCHAIN=go1.27.2 go vet ./...` — PASS.
+
+Покрытие: импорт VLESS/VMess/Trojan/SS/SOCKS/Hysteria2, безопасные ошибки,
+запрет подписок/нескольких ссылок, черновик без записи; native Build fixtures
+всех 13 ручных типов после привязки марки; create/edit/replace/delete,
+защита служебных подключений, ссылки routing/balancer/dialerProxy,
+generation, отказ валидатора без изменения файла, JSONC-комментарии и неизвестные
+поля, сохранение только tag/марки при замене. CLI использует временный Unix
+socket, передаёт credentials из stdin и требует явную generation/замену.
+TCP endpoint diagnostics понимает плоские settings и прежние servers/vnext.
+
+Из `xrayui-web`: `npm test` — PASS, 174 теста. Проверены формы 13 типов,
+сохранение неизвестных значений, очистка credentials, выбор legacy server/user,
+коллекции peers/правил, явная замена, поколение открытого черновика, блокировка
+невалидной формы и transport API к fake helper.
+
+Дополнительный прогон в установленном Chromium headless с настоящим Alpine,
+временным HTTP server и искусственными API-ответами — PASS: отрисовка всех
+13 форм, соответствие значений input/select/checkbox native-черновику,
+чтение credentials и сохранение. Исправлены обнаруженные старый вызов
+VLESS-selector и потеря selected value при создании динамических options.
+Этот прогон проверяет браузерную механику, а не соединение с реальным proxy.
+
+`git diff --check` — PASS. Службы, Xray config, TOML оператора и сеть рабочего
+сервера не менялись. Изменения M13 сохранены. Серверная O14.8 остаётся открытой:
+реальные подключения, GUI-приёмка и обновление установленного комплекта.

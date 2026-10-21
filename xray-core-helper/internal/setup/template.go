@@ -6,7 +6,7 @@ import (
 )
 
 func (s *fileStore) templateValues(plan Plan) (xrayconfig.TemplateValues, error) {
-	config := bootstrap.Defaults()
+	config := s.config
 	if s.configPath != "" {
 		var err error
 		config, err = bootstrap.Load(s.configPath)
@@ -32,14 +32,14 @@ func setupTemplateValues(config bootstrap.Config) xrayconfig.TemplateValues {
 }
 
 func (t *fileTransaction) templateValues() (xrayconfig.TemplateValues, error) {
-	config := bootstrap.Defaults()
+	config := t.store.config
 	path := t.store.configPath
 	if t.manifest.Network != nil {
 		path = t.manifest.Network.Candidate
 	}
 	if path != "" {
 		var err error
-		config, err = bootstrap.Load(path)
+		config, err = bootstrap.LoadWithTemplate(path, bootstrap.TemplateFile)
 		if err != nil {
 			return xrayconfig.TemplateValues{}, err
 		}

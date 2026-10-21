@@ -45,8 +45,12 @@ implementation before changing a public contract.
   Do not automatically fix existing ownership or permissions. Installation may
   set required ownership and permissions for helper's own installed files.
 - Treat all Xray configuration and command output as secret-bearing.
-- Never return or log raw config, UUIDs, passwords, private keys, tokens,
-  Reality short IDs, full VLESS URIs, or secret headers.
+- Never return raw config or log UUIDs, passwords, private keys, tokens,
+  Reality short IDs, full VLESS URIs, or secret headers. Ordinary read projections
+  must redact secrets. User-approved O14 exception: the explicit typed outbound
+  editor may return that selected connection's actual editable credentials under
+  the existing access checks, following the agreed 3x-ui behavior. This does not
+  authorize secrets in lists, summaries, errors, logs, or unrelated responses.
 - Use typed request/response structures, strict decoding, bounded bodies and
   stable machine-readable error codes.
 - External processes must use `exec.CommandContext` with a fixed executable

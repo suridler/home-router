@@ -9,8 +9,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/pelletier/go-toml/v2"
-
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 
@@ -58,7 +56,7 @@ func (service *Service) Put(ctx context.Context, settings api.UpdateSystemSettin
 	if err != nil {
 		return api.SystemSettingsResponse{}, err
 	}
-	disk, err := decodeSettings(raw)
+	disk, err := service.decodeSettings(raw)
 	if err != nil || !sameSettings(disk, service.config) {
 		return api.SystemSettingsResponse{}, ErrSettingsDrift
 	}
@@ -70,7 +68,11 @@ func (service *Service) Put(ctx context.Context, settings api.UpdateSystemSettin
 	if err := next.Validate(); err != nil {
 		return api.SystemSettingsResponse{}, ErrInvalidSettings
 	}
-	encoded, err := toml.Marshal(next)
+	sections := []string{"backup"}
+	if settings.Connectivity != nil {
+		sections = append(sections, "connectivity")
+	}
+	encoded, err := bootstrap.UpdateOverrides(raw, next, sections...)
 	if err != nil {
 		return api.SystemSettingsResponse{}, err
 	}

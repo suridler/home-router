@@ -166,6 +166,7 @@ func NewServer(version string, reader xrayconfig.Reader, adopter ConfigService, 
 		})
 	})
 	registerMutations(mux, adopter)
+	registerOutboundEditor(mux, reader, adopter)
 	registerProxyDomains(mux, domains)
 	var services ServerServices
 	if len(dependencies) > 0 {

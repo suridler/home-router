@@ -30,7 +30,7 @@ func (d *Downloader) FetchAsset(ctx context.Context, cfg bootstrap.GeodataConfig
 	if ctx == nil {
 		return nil, ErrInvalidConfiguration
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(); err != nil || !geodatalimits.ValidMB(cfg.MaxAssetSizeMB) {
 		return nil, ErrInvalidConfiguration
 	}
 	source := cfg.Geosite
@@ -46,7 +46,10 @@ func (d *Downloader) FetchAsset(ctx context.Context, cfg bootstrap.GeodataConfig
 	}
 	ctx, cancel := context.WithTimeout(ctx, d.overallTimeout)
 	defer cancel()
-	limit := min(d.maxAssetSize, int64(geodatalimits.Bytes(cfg.MaxAssetSizeMB)))
+	limit := int64(geodatalimits.Bytes(cfg.MaxAssetSizeMB))
+	if d.maxAssetSize > 0 {
+		limit = min(limit, d.maxAssetSize)
+	}
 	content, err := d.fetch(ctx, cfg, source.URL, limit)
 	if err != nil {
 		if errors.Is(err, ErrResponseTooLarge) {

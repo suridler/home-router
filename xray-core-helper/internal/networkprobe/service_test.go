@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"home-router/xray-core-helper/internal/testconfig"
 	"io"
 	"net"
 	"net/http"
@@ -60,7 +61,7 @@ func fixture(t *testing.T, resolver Resolver, runner Runner, trip roundTripFunc)
 			return &http.Response{StatusCode: 204, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 		}
 	}
-	s, err := newService(path, func() bootstrap.ConnectivityConfig { return bootstrap.Defaults().Connectivity }, resolver, runner, func(ip string) http.RoundTripper {
+	s, err := newService(path, func() bootstrap.ConnectivityConfig { return testconfig.Defaults().Connectivity }, resolver, runner, func(ip string) http.RoundTripper {
 		if ip != "142.251.150.119" {
 			t.Errorf("unresolved target: %s", ip)
 		}

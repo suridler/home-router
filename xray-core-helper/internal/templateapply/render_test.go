@@ -3,6 +3,7 @@ package templateapply
 import (
 	"bytes"
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,7 @@ func TestExplicitCandidateBindsSavedNetworkAndCurrentXray(t *testing.T) {
 			t.Fatal("candidate modified source", path)
 		}
 	}
-	engine.SetNetwork(bootstrap.Defaults().Network)
+	engine.SetNetwork(testconfig.Defaults().Network)
 	if _, err = engine.candidate(context.Background(), entry, true); err == nil {
 		t.Fatal("unselected interface accepted")
 	}
@@ -101,7 +102,7 @@ func TestXrayCandidateRendersHelperValuesAndCrossChecksDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := bootstrap.Defaults()
+	config := testconfig.Defaults()
 	values := xrayconfig.TemplateValues{Logging: config.Logging, API: config.Xray.API, UserGeosite: config.Geodata.UserGeosite, UserGeoip: config.Geodata.UserGeoip}
 	engine := &Engine{catalog: catalog}
 	engine.SetXrayValues(values)
@@ -154,7 +155,7 @@ func TestUnitFactoryUsesSavedMarkAndTableWithoutExpandingCommands(t *testing.T) 
 		t.Fatal(err)
 	}
 	engine := &Engine{}
-	n := bootstrap.Defaults().Network
+	n := testconfig.Defaults().Network
 	n.InterceptMark = 2
 	n.PolicyTable = 321
 	engine.SetNetwork(n)

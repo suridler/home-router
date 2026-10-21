@@ -8,11 +8,6 @@ import (
 	"home-router/xray-core-helper/internal/transaction"
 )
 
-const (
-	managedAccessLogPath = "/var/log/xray/access.log"
-	managedErrorLogPath  = "/var/log/xray/error.log"
-)
-
 var allowedLogLevels = map[string]struct{}{
 	"debug":   {},
 	"info":    {},
@@ -46,12 +41,18 @@ func ValidateLogConfigurationRequest(request api.LogConfigurationRequest) error 
 }
 
 // PlanLogConfiguration edits only the managed members of the existing Xray log object.
-func PlanLogConfiguration(request api.LogConfigurationRequest) transaction.Planner {
-	return PlanLogConfigurationValues(request, bootstrap.LoggingConfig{AccessPath: managedAccessLogPath, ErrorPath: managedErrorLogPath})
+func PlanLogConfiguration(request api.LogConfigurationRequest, current bootstrap.LoggingConfig) transaction.Planner {
+	return func(source []byte) ([]transaction.ByteEdit, error) {
+		next, err := ResolveLogConfiguration(request, current)
+		if err != nil {
+			return nil, err
+		}
+		return PlanLogConfigurationValues(request, next)(source)
+	}
 }
 
 // ResolveLogConfiguration preserves an operator-configured file path. Journal
-// and disabled values have no remembered file location and use the fixed default.
+// and disabled values have no remembered file location and use the file-mode destinations configured in helper TOML.
 func ResolveLogConfiguration(request api.LogConfigurationRequest, current bootstrap.LoggingConfig) (bootstrap.LoggingConfig, error) {
 	if err := ValidateLogConfigurationRequest(request); err != nil {
 		return bootstrap.LoggingConfig{}, err
@@ -62,10 +63,12 @@ func ResolveLogConfiguration(request api.LogConfigurationRequest, current bootst
 		}
 		return value
 	}
-	next := bootstrap.LoggingConfig{
-		AccessPath: logTargetPath(request.Access.Mode, file(current.AccessPath, managedAccessLogPath)),
-		ErrorPath:  logTargetPath(request.Error.Mode, file(current.ErrorPath, managedErrorLogPath)),
-		Level:      request.Loglevel, DNSLog: *request.DNSLog,
+	next := current
+	next.AccessPath = logTargetPath(request.Access.Mode, file(current.AccessPath, current.AccessFilePath))
+	next.ErrorPath = logTargetPath(request.Error.Mode, file(current.ErrorPath, current.ErrorFilePath))
+	next.Level, next.DNSLog = request.Loglevel, *request.DNSLog
+	if request.Access.Mode == api.LogTargetFile && (next.AccessPath == "" || next.AccessPath == "none") || request.Error.Mode == api.LogTargetFile && (next.ErrorPath == "" || next.ErrorPath == "none") {
+		return bootstrap.LoggingConfig{}, transaction.Reject("invalid_log_path", "file log destination is not configured", 400)
 	}
 	if next.Validate() != nil {
 		return bootstrap.LoggingConfig{}, transaction.Reject("invalid_log_path", "configured logging path is invalid", 400)

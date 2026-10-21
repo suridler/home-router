@@ -79,17 +79,12 @@ func readSettingsFile(path string, private bool) ([]byte, error) {
 	return raw, nil
 }
 
-func decodeSettings(raw []byte) (bootstrap.Config, error) {
-	c := bootstrap.Defaults()
+func (s *Service) decodeSettings(raw []byte) (bootstrap.Config, error) {
 	if len(raw) > maxSettingsBytes {
 		return bootstrap.Config{}, ErrInvalidSettings
 	}
-	decoder := toml.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&c); err != nil {
-		return bootstrap.Config{}, ErrInvalidSettings
-	}
-	if c.Validate() != nil {
+	c, err := bootstrap.Decode(raw, s.config)
+	if err != nil {
 		return bootstrap.Config{}, ErrInvalidSettings
 	}
 	return c, nil
@@ -123,18 +118,18 @@ func (s *Service) PrepareLogging(ctx context.Context, next bootstrap.LoggingConf
 	if err != nil {
 		return nil, err
 	}
-	old, err := decodeSettings(raw)
+	old, err := s.decodeSettings(raw)
 	if err != nil || !sameSettings(old, s.config) {
 		return nil, ErrSettingsDrift
 	}
 	newConfig := old
 	newConfig.Logging = next
-	encoded, err := toml.Marshal(newConfig)
+	encoded, err := bootstrap.UpdateOverrides(raw, newConfig, "logging")
 	if err != nil {
 		return nil, err
 	}
 	j := loggingJournal{Version: 1, Before: before, After: after, Previous: raw, Next: encoded}
-	if validateLoggingJournal(j) != nil {
+	if s.validateLoggingJournal(j) != nil {
 		return nil, ErrLoggingRecovery
 	}
 	current, err := s.loggingMetadata.Metadata(ctx)
@@ -206,7 +201,7 @@ func (p *loggingPreparation) finish(commit bool) error {
 	return nil
 }
 
-func validateLoggingJournal(j loggingJournal) error {
+func (s *Service) validateLoggingJournal(j loggingJournal) error {
 	validHash := func(h string) bool {
 		b, e := hex.DecodeString(h)
 		return e == nil && len(b) == sha256.Size && hex.EncodeToString(b) == h
@@ -221,8 +216,8 @@ func validateLoggingJournal(j loggingJournal) error {
 	} else if j.After.Generation == 0 || j.After.Generation != j.Before.Generation+1 {
 		return ErrLoggingRecovery
 	}
-	before, err := decodeSettings(j.Previous)
-	after, afterErr := decodeSettings(j.Next)
+	before, err := s.decodeSettings(j.Previous)
+	after, afterErr := s.decodeSettings(j.Next)
 	if err != nil || afterErr != nil {
 		return ErrLoggingRecovery
 	}
@@ -275,7 +270,7 @@ func (s *Service) resolveLogging(j loggingJournal, desired []byte) error {
 			return ErrLoggingRecovery
 		}
 	}
-	config, err := decodeSettings(desired)
+	config, err := s.decodeSettings(desired)
 	if err != nil {
 		return ErrLoggingRecovery
 	}
@@ -307,7 +302,7 @@ func (s *Service) RecoverLogging(ctx context.Context) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var j loggingJournal
-	if decoder.Decode(&j) != nil || validateLoggingJournal(j) != nil {
+	if decoder.Decode(&j) != nil || s.validateLoggingJournal(j) != nil {
 		return ErrLoggingRecovery
 	}
 	if decoder.Decode(new(any)) != io.EOF {

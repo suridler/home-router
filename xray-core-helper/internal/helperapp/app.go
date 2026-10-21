@@ -103,7 +103,7 @@ func (a *application) prepareSetup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	setupStore, err := setup.NewFileStoreWithCatalog(setup.StateRoot, nativeTemplateValidator, a.catalog, a.config.Geodata.MaxAssetSizeMB, a.config.Xray.AssetDir, a.config.Xray.Binary, a.config.Geodata.UserGeosite, a.config.Geodata.Builder, a.config.Geodata.UserGeoip)
+	setupStore, err := setup.NewFileStoreWithCatalog(setup.StateRoot, nativeTemplateValidator, a.catalog, a.config, a.config.Xray.AssetDir, a.config.Xray.Binary, a.config.Geodata.UserGeosite, a.config.Geodata.Builder, a.config.Geodata.UserGeoip)
 	if err != nil {
 		return err
 	}

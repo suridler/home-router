@@ -1,7 +1,7 @@
 document.addEventListener('alpine:init', () => {
   Alpine.data('routerApp', () => ({
     activeView: 'status', activeSettingsTab: 'logs', selectedLogKind: 'error',
-    status: null, geodata: null, templates: [], logs: [], trafficSamples: [], logMessage: '', geodataMessage: '', templateMessage: '', settingsMessage: '', configTestMessage: '', vlessMessage: '', requestError: '', requestErrorSource: '',
+    status: null, geodata: null, templates: [], logs: [], trafficSamples: [], logMessage: '', geodataMessage: '', templateMessage: '', settingsMessage: '', configTestMessage: '', requestError: '', requestErrorSource: '',
     homeEventLines: [], homeEventFilter: 'error', homeEventLoading: false, homeEventError: '', homeEventUpdatedAt: null, homeEventStale: false,
     proxyDomains: null, proxyDomainInput: '', proxyDomainMessage: '', proxyDomainLoading: false, proxyDomainPendingName: '',
     proxyDomainsStale: false, proxyDomainsUpdatedAt: null, proxyDomainRevision: 0,
@@ -22,8 +22,7 @@ document.addEventListener('alpine:init', () => {
     setupOperation: null,
     setupRecoveryRequired: false,
     geodataDraft: {}, systemSettings: { backup: { retainPerTemplate: 10 }, connectivity: { url: 'https://www.google.com/generate_204', expectedStatus: 204, timeoutSeconds: 15 } },
-    vlessImport: { tag: '', uri: '', preview: null, restart: true },
-    newVless: { tag: '', uri: '', preview: null, restart: true },
+    connection: { open: false, mode: 'create', draft: null, generation: null, target: '', uri: '', warnings: [], restart: true, showSecrets: false, selection: { server: 0, user: 0 } },
     outboundRemoval: { tag: '', references: null, restart: true },
     outboundMessage: '',
     routingConditionFields: [
@@ -209,7 +208,6 @@ document.addEventListener('alpine:init', () => {
         this.statusStale = false; this.statusLoadError = ''; this.statusUpdatedAt = new Date().toISOString();
         this.recordTraffic(this.status.trafficRates);
         if (!this.logDirty) this.applyLogSettings(this.status.logs || {});
-        if (!this.vlessOutbounds().some(outbound => outbound.tag === this.vlessImport.tag)) this.vlessImport.tag = this.vlessOutbounds()[0]?.tag || '';
         if (!this.allOutbounds().some(outbound => outbound.tag === this.outboundRemoval.tag)) this.outboundRemoval.tag = this.allOutbounds()[0]?.tag || '';
       }
       catch (error) { this.statusStale = true; this.statusLoadError = error.message; } finally { this.loading.status = false; }
@@ -537,44 +535,64 @@ document.addEventListener('alpine:init', () => {
         } else { this.settingsMessage = error.message; }
       } finally { this.pendingAction = ''; }
     },
-    vlessOutbounds() { return (this.status?.outboundTags || []).filter(outbound => outbound.protocol === 'vless'); },
+    connectivityOutbounds() { return this.allOutbounds().filter(outbound => outbound.protocol === 'vless'); },
     allOutbounds() { return this.status?.outboundTags || []; },
-    async previewVless() {
-      if (this.pendingAction || this.setupMode) return;
-      this.pendingAction = 'vless-preview'; this.vlessMessage = ''; this.vlessImport.preview = null;
-      try {
-        this.vlessImport.preview = await this.api('/api/outbounds/vless/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: this.vlessImport.uri, tag: this.vlessImport.tag }) });
-        this.vlessMessage = this.vlessImport.preview.unsupportedParameters?.length ? `Unsupported URI parameters: ${this.vlessImport.preview.unsupportedParameters.join(', ')}. They cannot be applied.` : 'Review the connection parameters, then apply the import.';
-      } catch (error) { this.vlessMessage = error.message; } finally { this.pendingAction = ''; }
+    editableOutbounds() { return this.allOutbounds().filter(item => !['direct', 'block', 'dns-out'].includes(item.tag)); },
+    connectionProtocols() { return window.OutboundEditor.protocols; },
+    connectionFields(advanced = false) { return this.connection.draft ? window.OutboundEditor.fields(this.connection.draft, this.connection.selection).filter(field => field.advanced === advanced) : []; },
+    connectionValue(field) { return window.OutboundEditor.read(this.connection.draft, field); },
+    changeConnection(field, value) { try { window.OutboundEditor.write(this.connection.draft, field, value); this.outboundMessage = ''; if (this.connection.errors) delete this.connection.errors[field.path]; } catch (error) { if (!this.connection.errors) this.connection.errors = {}; this.connection.errors[field.path] = error.message; this.outboundMessage = error.message; } },
+    newConnection(protocol = 'vless') {
+      this.connection = { open: true, mode: 'create', draft: { tag: '', protocol, settings: {} }, generation: this.status?.generation, target: '', uri: '', warnings: [], restart: true, showSecrets: false, selection: { server: 0, user: 0 } };
+      this.outboundMessage = '';
     },
-    async importVless() {
-      if (!this.canMutate()) return;
-      this.pendingAction = 'vless-import'; this.vlessMessage = '';
-      try {
-        const result = await this.api(`/api/outbounds/${encodeURIComponent(this.vlessImport.tag)}/import-vless`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: this.vlessImport.uri, restart: this.vlessImport.restart, expectedGeneration: this.status?.generation }) });
-        this.vlessMessage = `Imported into '${result.outboundTag}'${result.restart ? ' and restarted Xray' : ''}.`;
-        this.vlessImport.uri = ''; this.vlessImport.preview = null;
-        await this.loadStatus();
-      } catch (error) { if (error.code === 'generation_conflict') await this.loadStatus(); this.vlessMessage = error.message; } finally { this.pendingAction = ''; }
+    changeConnectionProtocol(protocol) {
+      if (this.connection.mode !== 'create') return;
+      const tag = this.connection.draft.tag;
+      this.newConnection(protocol); this.connection.draft.tag = tag;
     },
-    async previewNewVless() {
-      if (this.pendingAction || this.setupMode) return;
-      this.pendingAction = 'vless-add-preview'; this.outboundMessage = ''; this.newVless.preview = null;
+    closeConnection() { this.connection = { ...this.connection, open: false, draft: null, uri: '', showSecrets: false, selection: { server: 0, user: 0 } }; },
+    async editConnection(tag) {
+      if (this.pendingAction) return;
+      this.pendingAction = 'outbound-read'; this.outboundMessage = '';
       try {
-        this.newVless.preview = await this.api('/api/outbounds/vless/new/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: this.newVless.uri, tag: this.newVless.tag }) });
-        this.outboundMessage = this.newVless.preview.unsupportedParameters?.length ? `Unsupported URI parameters: ${this.newVless.preview.unsupportedParameters.join(', ')}. They cannot be applied.` : 'Review the new outbound, then add it.';
+        const result = await this.api(`/api/outbounds/${encodeURIComponent(tag)}`);
+        this.connection = { open: true, mode: 'edit', draft: result.outbound, generation: result.generation, target: tag, uri: '', warnings: [], restart: true, showSecrets: false, selection: { server: 0, user: 0 } };
       } catch (error) { this.outboundMessage = error.message; } finally { this.pendingAction = ''; }
     },
-    async addVless() {
-      if (!this.canMutate()) return;
-      this.pendingAction = 'vless-add'; this.outboundMessage = '';
+    async importConnection() {
+      if (this.pendingAction || this.connection.mode !== 'create') return;
+      const uri = this.connection.uri;
+      this.pendingAction = 'outbound-import'; this.outboundMessage = '';
       try {
-        const result = await this.api('/api/outbounds/vless', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: this.newVless.uri, tag: this.newVless.tag, restart: this.newVless.restart, expectedGeneration: this.status?.generation }) });
-        this.outboundMessage = `Added '${result.outboundTag}'${result.restart ? ' and restarted Xray' : ''}.`;
-        this.newVless.tag = ''; this.newVless.uri = ''; this.newVless.preview = null;
-        await this.loadStatus();
-      } catch (error) { if (error.code === 'generation_conflict') await this.loadStatus(); this.outboundMessage = error.message; } finally { this.pendingAction = ''; }
+        const result = await this.api('/api/outbound-drafts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri }) });
+        this.connection.draft = result.outbound; this.connection.uri = ''; this.connection.warnings = result.warnings || [];
+      } catch (error) { this.outboundMessage = error.message; } finally { this.pendingAction = ''; }
     },
+    async prepareConnectionReplacement() {
+      if (this.pendingAction || this.connection.mode !== 'create' || !this.connection.target) return;
+      const target = this.connection.target;
+      this.pendingAction = 'outbound-read';
+      try {
+        const result = await this.api(`/api/outbounds/${encodeURIComponent(target)}`);
+        this.connection.generation = result.generation; this.connection.mode = 'replace'; this.connection.draft.tag = target;
+      } catch (error) { this.outboundMessage = error.message; } finally { this.pendingAction = ''; }
+    },
+    async saveConnection() {
+      if (!this.canMutate() || !this.connection.draft || Object.keys(this.connection.errors || {}).length) return;
+      const { mode, draft, target, generation, restart } = this.connection;
+      if (mode === 'replace' && !window.confirm(`Заменить подключение «${target}»? Сохранятся только тег и обязательная исходящая марка helper. Прежние настройки подключения, транспорта, TLS и mux будут удалены.`)) return;
+      this.pendingAction = 'outbound-save'; this.outboundMessage = '';
+      const path = mode === 'create' ? '/api/outbound-drafts/apply' : `/api/outbounds/${encodeURIComponent(target)}${mode === 'replace' ? '/replace' : ''}`;
+      try {
+        await this.api(path, { method: mode === 'edit' ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outbound: draft, expectedGeneration: generation, restart, confirmReplacement: mode === 'replace' }) });
+        this.closeConnection(); this.outboundMessage = 'Подключение сохранено.'; await this.loadStatus();
+      } catch (error) { this.outboundMessage = error.code === 'generation_conflict' ? 'Конфигурация изменилась. Откройте подключение заново; черновик не применён.' : error.message; if (error.code === 'generation_conflict') await this.loadStatus(); } finally { this.pendingAction = ''; }
+    },
+    connectionServers() { const s = this.connection.draft?.settings || {}; return s.vnext || s.servers || []; },
+    connectionUsers() { return this.connectionServers()[this.connection.selection.server]?.users || []; },
+    connectionCollections() { return this.connection.draft ? window.OutboundEditor.collections(this.connection.draft) : []; },
+    resizeConnectionCollection(path, add) { window.OutboundEditor.resize(this.connection.draft, path, add); },
     async checkOutboundReferences() {
       if (this.pendingAction || this.setupMode) return;
       const tag = this.outboundRemoval.tag;

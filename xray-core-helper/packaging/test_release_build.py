@@ -106,7 +106,9 @@ p=Path(args[args.index('-o')+1]);p.write_bytes(b);p.chmod(0o755)
 
     def test_archives_share_commit_and_exclude_dirty_runtime_files(self):
         committed_canonical = (self.helper / 'templConf/xray/config.json').read_bytes()
+        committed_defaults = (self.helper / 'templConf/config.toml').read_bytes()
         (self.helper/'templConf/xray/config.json').write_text('dirty canonical template')
+        (self.helper/'templConf/config.toml').write_text('dirty defaults')
         (self.packaging/'install-from-github.sh').write_text('dirty bootstrap')
         (self.repo/'xrayui-web'/'.env').write_text('never ship')
         (self.repo/'docs/INSTALLATION.md').write_text('dirty instructions')
@@ -123,6 +125,7 @@ p=Path(args[args.index('-o')+1]);p.write_bytes(b);p.chmod(0o755)
                               'bundle omitted the selected Xray template')
                 self.assertEqual(archive.extractfile(CANONICAL_XRAY_TEMPLATE).read(),
                                  committed_canonical)
+                self.assertEqual(archive.extractfile('xray-core-helper/templConf/config.toml').read(), committed_defaults)
                 xray_templates = sorted(member.name for member in archive.getmembers()
                                         if member.isfile()
                                         and member.name.startswith('xray-core-helper/templConf/xray/'))

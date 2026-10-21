@@ -15,7 +15,7 @@ if ((standalone_prebuilt)); then
  exec "$helper_root/bin/xray-core-helper" install --bundle "$helper_root/.." "${standalone_arguments[@]}"
 fi
 
-web_mode=${XRAY_HELPER_WEB_ENABLED:-}; web_port=3000; explicit_port=0
+web_mode=${XRAY_HELPER_WEB_ENABLED:-}; web_port=; explicit_port=0
 while (($#)); do
   case "$1" in
     --web-port)
@@ -38,7 +38,7 @@ if [[ -z $web_mode && -t 0 && -t 1 ]]; then
 fi
 web_mode=${web_mode:-1}
 [[ $web_mode == 0 || $web_mode == 1 ]] || { echo "XRAY_HELPER_WEB_ENABLED must be 0 or 1" >&2; exit 2; }
-[[ $web_port =~ ^[0-9]{1,5}$ ]] && ((10#$web_port >= 1 && 10#$web_port <= 65535)) || { echo "invalid web port" >&2; exit 2; }
+if ((explicit_port)); then [[ $web_port =~ ^[0-9]{1,5}$ ]] && ((10#$web_port >= 1 && 10#$web_port <= 65535)) || { echo "invalid web port" >&2; exit 2; }; fi
 if ((explicit_port)) && [[ -e /etc/xray-core-helper/config.toml ]]; then echo "existing helper config preserved: edit [web].port there instead" >&2; exit 2; fi
 for dependency in python3 busctl systemd-sysusers systemd-tmpfiles systemd-analyze systemctl; do command -v "$dependency" >/dev/null || { echo "preflight_binary_unavailable: $dependency" >&2; exit 1; }; done
 if [[ $web_mode == 1 ]]; then
@@ -55,14 +55,23 @@ trap 'rm -rf -- "$build_dir"' EXIT
   python3 "$helper_root/packaging/dlc_builder.py" "$build_dir/domain-list-community" "$build_dir/domain-list-community.LICENSE"
 # Discovery and config parsing must finish before installed files/services change.
 "$build_dir/xray-core-helper" discover-xray > "$build_dir/discovery.json"
-config_input=/etc/xray-core-helper/config.toml
-if [[ ! -e $config_input ]]; then
-  sed -e "s/^port = 3000$/port = $((10#$web_port))/" "$helper_root/config.example.toml" > "$build_dir/config.toml"
-  config_input="$build_dir/config.toml"
+# Stage the current overrides with this bundle's complete defaults. This also
+# works before an older installed release has a helper template file.
+config_input="$build_dir/config.toml"
+if [[ -e /etc/xray-core-helper/config.toml ]]; then
+  cp /etc/xray-core-helper/config.toml "$config_input"
+else
+  cp "$helper_root/config.example.toml" "$config_input"
 fi
-"$build_dir/xray-core-helper" -config "$config_input" discover-xray --systemd > "$build_dir/paths.conf"
-"$build_dir/xray-core-helper" -config "$config_input" installation-settings > "$build_dir/installation.json"
+"$build_dir/xray-core-helper" -defaults "$helper_root/templConf/config.toml" -config "$config_input" discover-xray --systemd > "$build_dir/paths.conf"
+"$build_dir/xray-core-helper" -defaults "$helper_root/templConf/config.toml" -config "$config_input" installation-settings > "$build_dir/installation.json"
 helper_socket=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["socket"])' "$build_dir/installation.json")
+if ((explicit_port)); then
+  default_web_port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$build_dir/installation.json")
+  if [[ $((10#$web_port)) != "$default_web_port" ]]; then
+    printf '\n[web]\nport = %s\n' "$((10#$web_port))" >> "$config_input"
+  fi
+fi
 # Retire former maintenance triggers before starting the internal scheduler.
 # Do not interrupt an in-flight update or collection; retry after it completes.
 for stem in xray-core-helper-routing xray-core-helper-errors update-xray-geodata; do

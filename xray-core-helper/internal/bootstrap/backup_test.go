@@ -12,7 +12,7 @@ func TestBackupRetentionDefaultAndLimits(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[server]\nsocket = \"/tmp/helper.sock\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := Load(path)
+	config, err := testLoad(path)
 	if err != nil {
 		t.Fatal(err)
 	}

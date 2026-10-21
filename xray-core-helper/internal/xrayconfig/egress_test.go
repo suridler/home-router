@@ -1,13 +1,14 @@
 package xrayconfig
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
 func TestNewOutboundInheritsNonDefaultEgressMark(t *testing.T) {
 	source := strings.ReplaceAll(outboundFixture, `"mark": 255`, `"mark": 511`)
-	updated, err := plan(t, PlanAddVlessOutbound("edge-2", newURI), source)
+	updated, err := plan(t, PlanWriteOutbound("edge-2", json.RawMessage(nativeDraft), "create"), source)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,11 +3,11 @@ package nativerender
 import (
 	"bytes"
 	"context"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/templatecatalog"
 	"home-router/xray-core-helper/internal/templatevalidation"
 	"home-router/xray-core-helper/internal/xrayconfig"
@@ -23,7 +23,7 @@ func TestValidateStoredXrayPreservesConcreteRollbackEvidence(t *testing.T) {
 	for _, concrete := range []bool{false, true} {
 		t.Run(map[bool]string{false: "source", true: "concrete"}[concrete], func(t *testing.T) {
 			raw := []byte("{\n// helper:v1 bind level type=log-level source=helper.logging.level\n\"loglevel\": ${level}\n}\n")
-			values := xrayconfig.TemplateValues{Logging: bootstrap.Defaults().Logging}
+			values := xrayconfig.TemplateValues{Logging: testconfig.Defaults().Logging}
 			bound, err := xrayconfig.RenderTemplate(raw, values)
 			if err != nil {
 				t.Fatal(err)
@@ -83,7 +83,7 @@ func TestValidateStoredPreparesSourceButPreservesConcreteEvidence(t *testing.T) 
 			if err := os.WriteFile(path, input, 0600); err != nil {
 				t.Fatal(err)
 			}
-			renderer := Renderer{Network: bootstrap.Defaults().Network, Catalog: templatecatalog.Default()}
+			renderer := Renderer{Network: testconfig.Defaults().Network, Catalog: templatecatalog.Default()}
 			// Concrete rollback evidence must not be silently rebound to current settings.
 			if concrete {
 				renderer.Network.InterceptMark = 2

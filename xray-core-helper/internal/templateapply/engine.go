@@ -88,11 +88,11 @@ func NewEngineWithCatalog(check CrossCheck, backups BackupStore, runtime Runtime
 	if check == nil || backups == nil || runtime == nil {
 		return nil, &Error{Code: CodeRuntime}
 	}
-	name := bootstrap.DefaultUserGeositeName
+	name := ""
 	if len(userGeosite) > 0 {
 		name = userGeosite[0]
 	}
-	if !bootstrap.ValidUserGeositeName(name) {
+	if name != "" && !bootstrap.ValidUserGeositeName(name) {
 		return nil, &Error{Code: CodeBindingInvalid}
 	}
 	return &Engine{userGeosite: name, catalog: catalog, check: check, backups: backups, runtime: runtime, replacer: osReplacer{catalog: catalog}, hash: nativeHash}, nil

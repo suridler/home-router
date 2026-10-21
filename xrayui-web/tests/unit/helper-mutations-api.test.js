@@ -31,13 +31,13 @@ test('routing and outbound mutations preserve helper contracts and errors', asyn
   const fake = await startFakeHelper(async (request, response) => {
     const body = request.method === 'GET' ? null : await readJSON(request);
     calls.push({ method: request.method, path: request.url, body });
-    if (request.url === '/v1/xray/outbounds/vless/preview') {
-      return writeJSON(response, 200, { address: 'edge.example', port: 443, transport: 'xhttp', security: 'reality', flow: '', serverName: 'edge.example', unsupportedParameters: [] });
+    if (request.url === '/v1/xray/outbound-drafts/import') {
+      return writeJSON(response, 200, { outbound: { tag: 'draft', protocol: 'vless', settings: { id: 'test-secret' } }, warnings: ['Review parser output'] });
     }
     if (request.url === '/v1/xray/routing/rules' && request.method === 'POST') {
       return writeJSON(response, 200, { generation: 8, contentHash: 'next' });
     }
-    if (request.url === '/v1/xray/outbounds/vless' && request.method === 'POST') {
+    if (request.url === '/v1/xray/outbound-drafts/apply' && request.method === 'POST') {
       return writeJSON(response, 200, { generation: 9, contentHash: 'outbound-next' });
     }
     if (request.url === '/v1/xray/routing/rules/clone' && request.method === 'POST') {
@@ -63,11 +63,12 @@ test('routing and outbound mutations preserve helper contracts and errors', asyn
   const web = await startWeb(createApp(services));
   t.after(() => web.close());
 
-  const preview = await fetch(`${web.baseURL}/api/outbounds/vless/preview`, {
+  const preview = await fetch(`${web.baseURL}/api/outbound-drafts/import`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: 'vless://secret', tag: 'proxy' })
   });
   assert.equal(preview.status, 200);
-  assert.equal((await preview.json()).outboundTag, 'proxy');
+  assert.equal((await preview.json()).outbound.protocol, 'vless');
+  assert.equal(preview.headers.get('cache-control'), 'no-store');
 
   const add = await fetch(`${web.baseURL}/api/routing/rules`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -83,15 +84,15 @@ test('routing and outbound mutations preserve helper contracts and errors', asyn
   assert.deepEqual(helperAdd.body.rule.conditions.domain, ['domain:example.com', 'geosite:test']);
   assert.equal(helperAdd.body.expectedGeneration, 7);
 
-  const outbound = await fetch(`${web.baseURL}/api/outbounds/vless`, {
+  const outbound = await fetch(`${web.baseURL}/api/outbound-drafts/apply`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      expectedGeneration: 8, tag: 'backup', uri: 'vless://secret', restart: true
+      expectedGeneration: 8, outbound: { tag: 'backup', protocol: 'trojan', settings: { password: 'test-secret' } }, restart: true
     })
   });
   assert.equal(outbound.status, 200);
   assert.equal((await outbound.json()).generation, 9);
-  const helperOutbound = calls.find(call => call.path === '/v1/xray/outbounds/vless' && call.method === 'POST');
-  assert.deepEqual(helperOutbound.body, { uri: 'vless://secret', tag: 'backup', restart: true, expectedGeneration: 8 });
+  const helperOutbound = calls.find(call => call.path === '/v1/xray/outbound-drafts/apply' && call.method === 'POST');
+  assert.deepEqual(helperOutbound.body, { outbound: { tag: 'backup', protocol: 'trojan', settings: { password: 'test-secret' } }, restart: true, expectedGeneration: 8, confirmReplacement: false });
 
   const clone = await fetch(`${web.baseURL}/api/routing/rules/clone`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({

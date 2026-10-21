@@ -1,6 +1,9 @@
 package xrayconfig
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +32,24 @@ func TestNativeMarksAreUint32NotPortsAndDuplicateInboundIsRejected(t *testing.T)
 		}
 		if _, err := BindingValue([]byte(bad), provider); err == nil {
 			t.Fatal("ambiguous/invalid native relations accepted")
+		}
+	}
+}
+
+func TestOutboundEndpointSupportsNativeFlatAndLegacyServerShapes(t *testing.T) {
+	for _, settings := range []string{
+		`{"address":"edge.example","port":443}`,
+		`{"vnext":[{"address":"edge.example","port":443,"users":[]}]}`,
+		`{"servers":[{"address":"edge.example","port":443}]}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"outbounds":[{"tag":"proxy","protocol":"vless","settings":`+settings+`}]}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		reader := NewReader(Settings{Config: path})
+		endpoint, err := reader.OutboundEndpoint(context.Background(), "proxy")
+		if err != nil || endpoint != "edge.example:443" {
+			t.Fatalf("endpoint=%q error=%v", endpoint, err)
 		}
 	}
 }

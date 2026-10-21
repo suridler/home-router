@@ -36,6 +36,7 @@ type Settings interface {
 }
 
 type Service struct {
+	defaults bootstrap.LoggingConfig
 	checker  PathChecker
 	settings Settings
 	paths    func(bootstrap.LoggingConfig) (FilePreparer, error)
@@ -44,11 +45,11 @@ type Service struct {
 	rotation RotationPreparer
 }
 
-func New(engine ConfigTransaction, preparer FilePreparer, rotation RotationPreparer) (*Service, error) {
+func New(engine ConfigTransaction, preparer FilePreparer, rotation RotationPreparer, defaults bootstrap.LoggingConfig) (*Service, error) {
 	if engine == nil || preparer == nil || rotation == nil {
 		return nil, errors.New("logging mutation dependencies are required")
 	}
-	return &Service{engine: engine, preparer: preparer, rotation: rotation}, nil
+	return &Service{engine: engine, preparer: preparer, rotation: rotation, defaults: defaults}, nil
 }
 
 func (service *Service) Update(ctx context.Context, request api.LogConfigurationMutationRequest) (transaction.Metadata, error) {
@@ -66,7 +67,7 @@ func (service *Service) Update(ctx context.Context, request api.LogConfiguration
 	var next bootstrap.LoggingConfig
 	var restriction logpathcheck.Result
 	var before, after transaction.Metadata
-	planner := xrayconfig.PlanLogConfiguration(request.LogConfigurationRequest)
+	planner := xrayconfig.PlanLogConfiguration(request.LogConfigurationRequest, service.defaults)
 	if service.settings != nil {
 		planner = func(source []byte) ([]transaction.ByteEdit, error) {
 			var err error

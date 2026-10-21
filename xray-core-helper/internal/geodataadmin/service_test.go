@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"home-router/xray-core-helper/internal/testconfig"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -69,7 +70,7 @@ func cleanRecovery() geodatarecovery.Status {
 
 func configuredSettings() Settings {
 	return Settings{
-		MaxAssetSizeMB: 256, Builder: "/private/path/to/builder", UserGeosite: bootstrap.DefaultUserGeositeName, UserGeoip: bootstrap.DefaultUserGeoipName, Schedule: &api.GeodataSchedule{Enabled: true, Time: "04:00"},
+		MaxAssetSizeMB: 256, Builder: "/private/path/to/builder", UserGeosite: testconfig.Defaults().Geodata.UserGeosite, UserGeoip: testconfig.Defaults().Geodata.UserGeoip, Schedule: &api.GeodataSchedule{Enabled: true, Time: "04:00"},
 		Origins: []string{"https://data.example"},
 		Geosite: SourceSettings{URL: "https://data.example/files/geosite.dat",
 			Checksum: ChecksumSettings{URL: "https://data.example/checksums/geosite.sha256", Algorithm: "sha256"}},
@@ -80,7 +81,7 @@ func configuredSettings() Settings {
 
 func bootstrapSettings(settings Settings) bootstrap.GeodataConfig {
 	return bootstrap.GeodataConfig{
-		MaxAssetSizeMB: 256, UserGeosite: bootstrap.DefaultUserGeositeName, UserGeoip: bootstrap.DefaultUserGeoipName,
+		MaxAssetSizeMB: 256, UserGeosite: testconfig.Defaults().Geodata.UserGeosite, UserGeoip: testconfig.Defaults().Geodata.UserGeoip,
 		Origins: settings.Origins,
 		Builder: "/private/path/to/builder",
 		Geosite: bootstrap.GeodataSourceConfig{
@@ -399,7 +400,7 @@ func TestSettingsReplacementRejectsConcurrentManualEdit(t *testing.T) {
 	store, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
 	defer store.Close()
 	before := currentGeneration(t, service)
-	cfg, err := bootstrap.Load(filepath.Join(filepath.Dir(path), "config.toml"))
+	cfg, err := testconfig.Load(filepath.Join(filepath.Dir(path), "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +474,7 @@ func TestOpenRejectsInvalidBootstrapAndRelativeDatabasePath(t *testing.T) {
 	if _, err := Open(context.Background(), filepath.Join(t.TempDir(), "helper.sqlite"), bad); err == nil {
 		t.Fatal("Open() accepted bootstrap settings with an unconfigured URL origin")
 	}
-	if _, err := Open(context.Background(), "relative.sqlite", bootstrap.Defaults().Geodata); err == nil {
+	if _, err := Open(context.Background(), "relative.sqlite", testconfig.Defaults().Geodata); err == nil {
 		t.Fatal("Open() accepted a relative database path")
 	}
 }
@@ -584,7 +585,7 @@ func TestCancelledStoreOpenDoesNotCreateDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cancelled.sqlite")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if store, err := Open(ctx, path, bootstrap.Defaults().Geodata); err == nil {
+	if store, err := Open(ctx, path, testconfig.Defaults().Geodata); err == nil {
 		_ = store.Close()
 		t.Fatal("Open() succeeded with a canceled context")
 	}
@@ -603,15 +604,15 @@ func currentGeneration(t *testing.T, s *Service) uint64 {
 }
 func testTOML(t *testing.T, path string, geo bootstrap.GeodataConfig) *systemsettings.Service {
 	t.Helper()
-	cfg := bootstrap.Defaults()
+	cfg := testconfig.Defaults()
 	if geo.MaxAssetSizeMB == 0 {
 		geo.MaxAssetSizeMB = 256
 	}
 	if geo.UserGeosite == "" {
-		geo.UserGeosite = bootstrap.DefaultUserGeositeName
+		geo.UserGeosite = testconfig.Defaults().Geodata.UserGeosite
 	}
 	if geo.UserGeoip == "" {
-		geo.UserGeoip = bootstrap.DefaultUserGeoipName
+		geo.UserGeoip = testconfig.Defaults().Geodata.UserGeoip
 	}
 	cfg.Geodata = geo
 	name := filepath.Join(filepath.Dir(path), "config.toml")
@@ -624,7 +625,7 @@ func testTOML(t *testing.T, path string, geo bootstrap.GeodataConfig) *systemset
 			t.Fatal(err)
 		}
 	}
-	disk, err := bootstrap.Load(name)
+	disk, err := testconfig.Load(name)
 	if err != nil {
 		t.Fatal(err)
 	}

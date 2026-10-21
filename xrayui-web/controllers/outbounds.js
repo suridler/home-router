@@ -1,5 +1,5 @@
-function createOutboundsController({ controlEnabled, addVlessOutbound, deleteOutbound, getOutboundReferences,
-  previewNewVlessOutbound, previewVlessImport, importVlessOutbound }) {
+function createOutboundsController({ controlEnabled, deleteOutbound, getOutboundReferences,
+  importOutbound, editOutbound, writeOutbound }) {
   async function respond(res, operation) {
     try {
       res.json({ ok: true, ...(await operation()) });
@@ -9,23 +9,13 @@ function createOutboundsController({ controlEnabled, addVlessOutbound, deleteOut
   }
 
   return {
-    previewVless: async (req, res) => respond(res, () => previewVlessImport(req.body?.uri, req.body?.tag)),
-    previewNewVless: async (req, res) => respond(res, () => previewNewVlessOutbound(req.body?.uri, req.body?.tag)),
+    import: async (req, res) => { res.set('Cache-Control', 'no-store'); return respond(res, () => importOutbound(req.body?.uri)); },
+    edit: async (req, res) => { res.set('Cache-Control', 'no-store'); return respond(res, () => editOutbound(req.params.tag)); },
+    write: operation => async (req, res) => {
+      if (!controlEnabled) return res.status(403).json({ ok: false, code: 'control_disabled', message: 'Configuration changes are disabled' });
+      return respond(res, () => writeOutbound(operation, req.params.tag, req.body?.outbound, req.body?.restart === true, req.body?.expectedGeneration, req.body?.confirmReplacement === true));
+    },
     references: async (req, res) => respond(res, () => getOutboundReferences(req.params.tag)),
-    importVless: async (req, res) => {
-      if (!controlEnabled) {
-        res.status(403).json({ ok: false, message: 'Configuration changes are disabled' });
-        return;
-      }
-      await respond(res, () => importVlessOutbound(req.body?.uri, req.params.tag, req.body?.restart === true, req.body?.expectedGeneration));
-    },
-    addVless: async (req, res) => {
-      if (!controlEnabled) {
-        res.status(403).json({ ok: false, message: 'Configuration changes are disabled' });
-        return;
-      }
-      await respond(res, () => addVlessOutbound(req.body?.uri, req.body?.tag, req.body?.restart === true, req.body?.expectedGeneration));
-    },
     delete: async (req, res) => {
       if (!controlEnabled) {
         res.status(403).json({ ok: false, message: 'Configuration changes are disabled' });

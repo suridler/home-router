@@ -21,7 +21,7 @@ func TestSchedulerConfigDefaultsAndValidation(t *testing.T) {
 		if err := os.WriteFile(path, []byte(sample.body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		config, err := Load(path)
+		config, err := testLoad(path)
 		if (err == nil) != sample.valid {
 			t.Fatalf("%q: %v", sample.body, err)
 		}

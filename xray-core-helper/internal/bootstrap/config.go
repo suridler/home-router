@@ -1,7 +1,9 @@
 package bootstrap
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/pelletier/go-toml/v2"
 	"home-router/xray-core-helper/internal/geodatalimits"
 	"net"
 	"net/url"
@@ -11,13 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/pelletier/go-toml/v2"
 )
 
 const DefaultConfigPath = "/etc/xray-core-helper/config.toml"
-const DefaultUserGeositeName = "geosite_user.dat"
-const DefaultUserGeoipName = "geoip_user.dat"
+const DefaultTemplatePath = "/usr/share/xray-core-helper/templConf/config.toml"
+
+// TemplateFile is selected once at process startup. Standalone preflight may
+// select a downloaded bundle; daemon requests never change this path.
+var TemplateFile = DefaultTemplatePath
 
 const (
 	geositeAssetName = "geosite.dat"
@@ -30,6 +33,8 @@ var userGeositeName = regexp.MustCompile(`^geosite_[A-Za-z0-9][A-Za-z0-9_-]{0,47
 var userGeoipName = regexp.MustCompile(`^geoip_[A-Za-z0-9][A-Za-z0-9_-]{0,47}\.dat$`)
 
 type Config struct {
+	defaults []byte // Full template snapshot used to load these settings.
+
 	Network      NetworkConfig      `toml:"network"`
 	Logging      LoggingConfig      `toml:"logging"`
 	Scheduler    SchedulerConfig    `toml:"scheduler"`
@@ -122,66 +127,51 @@ type ServerConfig struct {
 	SocketGroup string `toml:"socket_group"`
 }
 
-func Defaults() Config {
-	return Config{
-		Network:      NetworkConfig{InterceptMark: 1, PolicyTable: 100},
-		Logging:      LoggingConfig{AccessPath: "none", Level: "warning"},
-		Scheduler:    SchedulerConfig{GeodataUpdateEnabled: true, GeodataUpdateTime: "04:00"},
-		Connectivity: ConnectivityConfig{URL: "https://www.google.com/generate_204", ExpectedStatus: 204, TimeoutSeconds: 15},
-		Web:          WebConfig{ExporterURL: "http://127.0.0.1:9101", Host: "127.0.0.1", Port: 3000, ControlEnabled: true},
-		Backup:       BackupConfig{RetainPerTemplate: 10},
-		Xray: XrayConfig{
-			Binary:   "/usr/local/bin/xray",
-			API:      "127.0.0.1:10085",
-			AssetDir: "/usr/local/share/xray",
-		},
-		Geodata: GeodataConfig{
-			MaxAssetSizeMB: geodatalimits.DefaultAssetSizeMB,
-			Builder:        "/usr/local/bin/domain-list-community",
-			UserGeosite:    DefaultUserGeositeName,
-			UserGeoip:      DefaultUserGeoipName,
-			Origins:        []string{"https://raw.githubusercontent.com"},
-			Geosite:        recommendedGeodataSource("geosite"),
-			Geoip:          recommendedGeodataSource("geoip"),
-		},
-		Storage: StorageConfig{Database: "/var/lib/xray-core-helper/helper.sqlite"},
-		Server: ServerConfig{
-			Socket:      "/run/xray-core-helper/helper.sock",
-			SocketGroup: "xray-core-helper",
-		},
+func ReadDefaults(path string) (Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("read helper defaults template: %w", err)
 	}
+	return parseDefaults(raw)
 }
 
-func Load(path string) (Config, error) {
-	config := Defaults()
-	file, err := os.Open(path)
-	if err != nil {
-		return Config{}, fmt.Errorf("open helper config: %w", err)
-	}
-	defer file.Close()
-
-	decoder := toml.NewDecoder(file)
+func parseDefaults(raw []byte) (Config, error) {
+	var config Config
+	decoder := toml.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
-		return Config{}, fmt.Errorf("decode helper config: %w", err)
+		return Config{}, fmt.Errorf("decode helper defaults template: %w", err)
 	}
 	if err := config.Validate(); err != nil {
+		return Config{}, fmt.Errorf("invalid helper defaults template: %w", err)
+	}
+	supplied := map[string]any{}
+	if err := toml.Unmarshal(raw, &supplied); err != nil {
 		return Config{}, err
 	}
+	expected, err := configMap(config)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := requireTemplateKeys(supplied, expected, ""); err != nil {
+		return Config{}, err
+	}
+	config.defaults = bytes.Clone(raw)
 	return config, nil
 }
 
-func recommendedGeodataSource(kind string) GeodataSourceConfig {
-	source := defaultGeodataSource()
-	source.URL = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-" + kind + "/release/" + kind + ".dat"
-	source.Checksum.URL = source.URL + ".sha256sum"
-	return source
-}
+func Load(path string) (Config, error) { return LoadWithTemplate(path, TemplateFile) }
 
-func defaultGeodataSource() GeodataSourceConfig {
-	return GeodataSourceConfig{
-		Checksum: GeodataChecksumConfig{Algorithm: sha256Algorithm},
+func LoadWithTemplate(path, templatePath string) (Config, error) {
+	defaults, err := ReadDefaults(templatePath)
+	if err != nil {
+		return Config{}, err
 	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("open helper config: %w", err)
+	}
+	return Decode(raw, defaults)
 }
 
 func (config Config) Validate() error {
@@ -204,10 +194,13 @@ func (config Config) Validate() error {
 		return fmt.Errorf("backup.retain_per_template must be between 1 and 100")
 	}
 	paths := map[string]string{
-		"xray.binary":      config.Xray.Binary,
-		"xray.asset_dir":   config.Xray.AssetDir,
 		"storage.database": config.Storage.Database,
 		"server.socket":    config.Server.Socket,
+	}
+	for name, value := range map[string]string{"xray.binary": config.Xray.Binary, "xray.asset_dir": config.Xray.AssetDir} {
+		if value != "" {
+			paths[name] = value
+		}
 	}
 	for name, value := range paths {
 		if !filepath.IsAbs(value) {
@@ -232,9 +225,11 @@ func (config Config) Validate() error {
 	if !systemGroupName.MatchString(config.Server.SocketGroup) {
 		return fmt.Errorf("server.socket_group must be a valid system group name")
 	}
-	for _, assetName := range []string{geositeAssetName, geoipAssetName} {
-		if _, err := config.GeodataAssetPath(assetName); err != nil {
-			return err
+	if config.Xray.AssetDir != "" {
+		for _, assetName := range []string{geositeAssetName, geoipAssetName} {
+			if _, err := config.GeodataAssetPath(assetName); err != nil {
+				return err
+			}
 		}
 	}
 	if err := config.Geodata.Validate(); err != nil {
@@ -435,3 +430,24 @@ func ValidUserGeositeName(name string) bool {
 }
 
 func ValidUserGeoipName(name string) bool { return userGeoipName.MatchString(name) }
+
+// Full templates must list every setting, including false and empty values.
+// Otherwise a Go zero value would silently become a second source of defaults.
+func requireTemplateKeys(supplied, expected map[string]any, prefix string) error {
+	for key, value := range expected {
+		got, ok := supplied[key]
+		if !ok {
+			return fmt.Errorf("incomplete helper defaults template: missing %s%s", prefix, key)
+		}
+		if table, ok := value.(map[string]any); ok {
+			provided, ok := got.(map[string]any)
+			if !ok {
+				return fmt.Errorf("invalid helper defaults table: %s%s", prefix, key)
+			}
+			if err := requireTemplateKeys(provided, table, prefix+key+"."); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

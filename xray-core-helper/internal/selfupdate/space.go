@@ -2,7 +2,6 @@ package selfupdate
 
 import (
 	"errors"
-	"home-router/xray-core-helper/internal/bootstrap"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,7 +81,7 @@ func (e *Engine) CheckSpace(op *Operation, rollback bool) error {
 		if !op.SnapshotReady {
 			extra := []string{"/etc/xray-core-helper", "/var/lib/xray-core-helper", e.ConfigPath, "/etc/systemd/system/xray-core-helper.service.d/20-installation-paths.conf"}
 			// Existing custom DB files may live outside the default data directory.
-			if cfg, err := bootstrap.Load(e.Files.Path(e.ConfigPath)); err == nil {
+			if cfg, err := e.loadConfig(bundle); err == nil {
 				extra = append(extra, cfg.Storage.Database, cfg.Storage.Database+"-wal", cfg.Storage.Database+"-shm")
 			}
 			for _, path := range pathsFor(Targets(bundle, op.Web), extra...) {
