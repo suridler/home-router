@@ -218,6 +218,7 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	if err != nil {
 		return nil, err
 	}
+	cleanup.add(geodataExecutor.Close)
 	geodataContract := geodatacontract.Contract{MaxAssetSizeMB: config.Geodata.MaxAssetSizeMB, Service: geodataService, Executor: geodataExecutor}
 	readinessHealth, err := geodataupdate.NewRoutingServiceHealthVerifier(routingClient)
 	if err != nil {

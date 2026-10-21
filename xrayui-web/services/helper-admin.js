@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { HelperClientError, LONG_OPERATION_TIMEOUT_MS, MAX_REQUEST_TIMEOUT_MS } = require('./helper-client');
+const { HelperClientError, LONG_OPERATION_TIMEOUT_MS } = require('./helper-client');
 
 const persistenceUncertainCodes = new Set([
   'domain_runtime_sync_failed',
@@ -142,8 +142,7 @@ function createHelperAdminService({ helperClient }) {
 
   async function updateGeodata() {
     return request('POST', '/v1/xray/geodata/update', undefined, {
-      headers: { 'Idempotency-Key': `xrayui-${crypto.randomUUID()}` },
-      timeoutMs: MAX_REQUEST_TIMEOUT_MS
+      headers: { 'Idempotency-Key': `xrayui-${crypto.randomUUID()}` }
     });
   }
 

@@ -103,7 +103,7 @@ document.addEventListener('alpine:init', () => {
       await Promise.all([this.loadStatus(), this.loadLogs(), this.loadGeodata(), this.loadProxyDomains(), this.loadTemplates(), this.loadSystemSettings(), this.loadSafeApply(), this.refreshHomeEvents()]);
       await this.loadNetworkProbes();
       window.setInterval(() => { this.safeApplyNow = Date.now(); }, 1000);
-      window.setInterval(() => { this.loadStatus(); this.loadSafeApply(); }, 5000);
+      window.setInterval(() => { this.loadStatus(); this.loadSafeApply(); this.loadGeodata(); }, 5000);
       window.setInterval(() => { this.refreshHomeEvents(); }, 10000);
     },
     viewFromHash() {
@@ -270,8 +270,12 @@ document.addEventListener('alpine:init', () => {
       return matching.slice().reverse().slice(0, 8);
     },
     async loadGeodata() {
+      if (this.loading.geodata) return;
+      const wasRunning = this.geodata?.operation?.state === 'running';
       this.loading.geodata = true;
-      try { const data = await this.api('/api/settings/geodata'); this.geodata = data; if (!this.geodataDirty) this.geodataDraft = { ...data.settings }; }
+      try { const data = await this.api('/api/settings/geodata'); this.geodata = data; if (data.operation?.state === 'running') this.geodataMessage = data.progressLabel || 'Обновление геобаз выполняется…';
+        else if (wasRunning) { this.geodataMessage = data.operation?.state === 'succeeded' && !data.activation ? '' : data.failureLabel; await Promise.all([this.loadStatus(), this.loadProxyDomains()]); }
+        if (!this.geodataDirty) this.geodataDraft = { ...data.settings }; }
       catch (error) { this.geodataMessage = error.message; } finally { this.loading.geodata = false; }
     },
     validProxyDomainSnapshot(data) {
@@ -496,10 +500,10 @@ document.addEventListener('alpine:init', () => {
       catch (error) { this.configTestMessage = error.message; } finally { this.pendingAction = ''; }
     },
     async updateGeodata() {
-      if (!this.canMutate()) return;
+      if (!this.canMutate() || this.geodata?.operation?.state === 'running') return;
       this.pendingAction = 'geodata-update'; this.geodataMessage = 'Обновление геоданных…';
-      try { await this.api('/api/geodata/update', { method: 'POST', timeoutMs: 15 * 60 * 1000 }); this.geodataMessage = ''; await Promise.all([this.loadGeodata(), this.loadStatus()]); }
-      catch (error) { await Promise.all([this.loadGeodata(), this.loadStatus()]); this.geodataMessage = this.geodata?.failureLabel || error.message; } finally { this.pendingAction = ''; }
+      try { const result = await this.api('/api/geodata/update', { method: 'POST' }); if (result.operation) this.geodata = { ...this.geodata, operation: result.operation }; this.geodataMessage = result.operation?.state === 'running' ? 'Обновление геобаз выполняется…' : ''; await Promise.all([this.loadGeodata(), this.loadStatus()]); }
+      catch (error) { await Promise.all([this.loadGeodata(), this.loadStatus()]); this.geodataMessage = this.geodata?.operation?.state === 'running' ? (this.geodata.progressLabel || 'Обновление геобаз выполняется…') : error.message; } finally { this.pendingAction = ''; }
     },
     async saveGeodata() {
       if (!this.canMutate()) return;

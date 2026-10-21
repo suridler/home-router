@@ -18,7 +18,7 @@ function createGeodataController({ controlEnabled, getGeodataStatus, saveGeodata
         res.status(503).json({ ok: false, message: 'control API is disabled; enable [web].control_enabled in helper and restart helper' });
         return;
       }
-      try { res.json({ ok: true, ...(await updateGeodata()), geodata: await getGeodataStatus() }); }
+      try { const result = await updateGeodata(); res.status(result.operation?.state === 'running' ? 202 : 200).json({ ok: true, ...result }); }
       catch (error) { res.status(error.statusCode || 503).json({ ok: false, code: error.code || 'geodata_update_failed', message: error.message }); }
     }
   };

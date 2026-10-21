@@ -301,6 +301,9 @@ func (service *Service) readUpdateReplay(ctx context.Context, idempotencyKey str
 		return Operation{}, VersionedSettings{}, false, fmt.Errorf("read geodata replay key: %w", err)
 	}
 	if key != idempotencyKey {
+		if current.State == OperationRunning {
+			return Operation{}, VersionedSettings{}, false, ErrOperationInProgress
+		}
 		return Operation{}, VersionedSettings{}, false, nil
 	}
 	currentFingerprint, err := requestFingerprint(settings)

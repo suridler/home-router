@@ -81,14 +81,14 @@ func TestExecutorUsesTOMLSnapshotAndReplaysWithoutRepeatingWork(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "config.toml"), encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	first, err := executor.Execute(context.Background(), "request-1")
+	first, err := executeForTest(executor, context.Background(), "request-1")
 	if err != nil || first.State != OperationSucceeded {
 		t.Fatal(first, err)
 	}
 	if updater.cfg.MaxAssetSizeMB != 512 || updater.cfg.Builder != "/custom/builder" || updater.cfg.Geosite.URL != changed.Geosite.URL {
 		t.Fatal("not a TOML snapshot", updater.cfg)
 	}
-	replay, err := executor.Execute(context.Background(), "request-1")
+	replay, err := executeForTest(executor, context.Background(), "request-1")
 	if err != nil || replay.ID != first.ID || updater.calls != 1 {
 		t.Fatal("duplicate execution", err)
 	}
@@ -97,7 +97,7 @@ func TestExecutorUsesTOMLSnapshotAndReplaysWithoutRepeatingWork(t *testing.T) {
 	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), changed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executor.Execute(context.Background(), "request-1"); !executionErrorIs(err, "idempotency_conflict", 409) {
+	if _, err := executeForTest(executor, context.Background(), "request-1"); !executionErrorIs(err, "idempotency_conflict", 409) {
 		t.Fatal(err)
 	}
 }
@@ -133,8 +133,8 @@ func TestExecutorPersistsPartialResultsActivationAndWarnings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, runErr := executor.Execute(ctx, "update")
-			if (runErr != nil) != (kind == "partial" || kind == "gateway") {
+			_, runErr := executeForTest(executor, ctx, "update")
+			if (runErr != nil) != (kind == "partial" || kind == "gateway" || kind == "cancelled") {
 				t.Fatal("unexpected result", runErr)
 			}
 			status, err := service.Status(context.Background())
@@ -143,6 +143,9 @@ func TestExecutorPersistsPartialResultsActivationAndWarnings(t *testing.T) {
 			}
 			if kind == "gateway" && status.Operation.State != OperationSucceeded {
 				t.Fatal("gateway error marked file update failed")
+			}
+			if kind == "cancelled" && status.Operation.ErrorCode != string(FailureInterrupted) {
+				t.Fatal("interruption hidden", status.Operation)
 			}
 			if kind == "partial" && status.Operation.State != OperationFailed {
 				t.Fatal("partial failure hidden")
@@ -199,8 +202,21 @@ func TestExecutorReturnsKnownResultsWhenFinalPersistenceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := executor.Execute(context.Background(), "broken-final-state")
+	op, err := executeForTest(executor, context.Background(), "broken-final-state")
 	if !executionErrorIs(err, "geodata_cycle_save_state_failed", 503) || op.ID == "" || op.Report == nil || op.Report.Replaced != 1 {
 		t.Fatalf("lost final results: %+v %v", op, err)
 	}
+}
+
+// Exercise completion and persistence failures synchronously; async admission and
+// lifecycle are covered by async_test.go and the real HTTP contract tests.
+func executeForTest(executor *Executor, ctx context.Context, key string) (Operation, error) {
+	operation, settings, replayed, err := executor.service.BeginUpdateSnapshot(ctx, key)
+	if err != nil {
+		return Operation{}, admissionError(err)
+	}
+	if replayed {
+		return operation, operationError(operation)
+	}
+	return executor.executeAdmitted(ctx, operation, settings)
 }

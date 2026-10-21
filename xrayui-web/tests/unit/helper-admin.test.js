@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHelperAdminService } = require('../../services/helper-admin');
-const { LONG_OPERATION_TIMEOUT_MS, MAX_REQUEST_TIMEOUT_MS } = require('../../services/helper-client');
+const { LONG_OPERATION_TIMEOUT_MS } = require('../../services/helper-client');
 
 test('admin operations use only typed helper endpoints and payloads', async () => {
   const calls = [];
@@ -57,7 +57,7 @@ test('admin operations use only typed helper endpoints and payloads', async () =
   assert.equal(serviceAction.options.timeoutMs, LONG_OPERATION_TIMEOUT_MS);
   const update = calls.find(call => call.path === '/v1/xray/geodata/update');
   assert.match(update.options.headers['Idempotency-Key'], /^xrayui-/);
-  assert.equal(update.options.timeoutMs, MAX_REQUEST_TIMEOUT_MS);
+  assert.equal(update.options.timeoutMs, undefined);
   assert.equal(calls.some(call => call.path.includes('systemctl') || call.path.includes('config.json')), false);
 });
 

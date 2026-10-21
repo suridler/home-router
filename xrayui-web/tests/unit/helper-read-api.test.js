@@ -183,3 +183,18 @@ test('geodata partial failure shows its stage and a successful retry clears the 
   assert.equal(result.health.state, 'ok');
   assert.equal(result.operation.id, 'op-2');
 });
+
+test('running geodata status exposes the durable process stage', async () => {
+  const { createHelperReadService } = require('../../services/helper-read-service');
+  const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}),
+    helperClient: { async request(_, path) {
+      if (path === '/v1/xray/geodata/update/status') return {
+        operation: { id: 'running-op', state: 'running', report: { process: 'custom', stage: 'build' } }
+      };
+      return helperPayload(path);
+    } }
+  });
+  const result = await service.getGeodataStatus();
+  assert.equal(result.progressLabel, 'Пользовательские базы · Сборка');
+  assert.equal(result.health.label, result.progressLabel);
+});

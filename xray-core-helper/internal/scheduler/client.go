@@ -27,8 +27,8 @@ func MaintenanceJobs(socket string) []Job {
 }
 
 func GeodataJob(socket string, hour, minute int) Job {
-	client := unixhttp.NewClient(socket, 20*time.Minute)
-	return Job{Name: "geodata", Next: Daily(hour, minute), Timeout: 20 * time.Minute,
+	client := unixhttp.NewClient(socket, 15*time.Second)
+	return Job{Name: "geodata", Next: Daily(hour, minute), Timeout: 15 * time.Second,
 		Run: func(ctx context.Context, due time.Time) error {
 			return post(ctx, client, "/v1/xray/geodata/update", "", "scheduled-geodata-"+due.Format("2006-01-02-1504"))
 		}}

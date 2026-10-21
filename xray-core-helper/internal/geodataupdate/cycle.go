@@ -104,6 +104,11 @@ func (c *Cycle) UpdateReportProgress(ctx context.Context, cfg bootstrap.GeodataC
 		if err != nil {
 			c.issue(&report, "custom", "", "resources", err)
 		} else {
+			report.Process, report.Stage = "custom", "build"
+			if err := checkpoint(report); err != nil {
+				c.issue(&report, "custom", "", "save_state", err)
+				return report
+			}
 			custom := map[string][]byte{}
 			resources := map[string][]string{cfg.UserGeosite: names, cfg.UserGeoip: ips}
 			for _, name := range []string{cfg.UserGeosite, cfg.UserGeoip} {

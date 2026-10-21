@@ -485,7 +485,27 @@ func runGeodata(client *http.Client, command, key string, stdout io.Writer) erro
 			map[string]string{"Idempotency-Key": key}, &response); err != nil {
 			return err
 		}
-		return writeJSON(stdout, response)
+		for response.Operation.State == "running" {
+			time.Sleep(time.Second)
+			var status api.GeodataStatusResponse
+			if err := requestJSON(client, http.MethodGet, "/v1/xray/geodata/update/status", nil, &status); err != nil {
+				return err
+			}
+			if status.Operation == nil || status.Operation.ID != response.Operation.ID {
+				return errors.New("geodata_operation_changed: inspect geodata status")
+			}
+			response.Operation = *status.Operation
+		}
+		if err := writeJSON(stdout, response); err != nil {
+			return err
+		}
+		if response.Operation.State != "succeeded" {
+			return fmt.Errorf("geodata update failed: %s", response.Operation.ErrorCode)
+		}
+		if response.Operation.Report != nil && response.Operation.Report.Activation != nil {
+			return fmt.Errorf("gateway error: %s", response.Operation.Report.Activation.Code)
+		}
+		return nil
 	default:
 		return errors.New("unsupported geodata command")
 	}

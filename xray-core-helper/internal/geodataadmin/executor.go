@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"home-router/xray-core-helper/internal/bootstrap"
@@ -18,9 +19,14 @@ type Updater interface {
 }
 
 type Executor struct {
-	service *Service
-	base    bootstrap.GeodataConfig
-	updater Updater
+	service       *Service
+	base          bootstrap.GeodataConfig
+	updater       Updater
+	mu            sync.Mutex
+	workerContext context.Context
+	cancel        context.CancelFunc
+	workers       sync.WaitGroup
+	closed        bool
 }
 
 type ExecutionError struct {
@@ -37,16 +43,16 @@ func NewExecutor(service *Service, trustedBootstrap bootstrap.GeodataConfig, upd
 		filepath.Clean(trustedBootstrap.Builder) != trustedBootstrap.Builder {
 		return nil, errors.New("geodata execution service dependencies are required")
 	}
-	return &Executor{service: service, base: trustedBootstrap, updater: updater}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Executor{service: service, base: trustedBootstrap, updater: updater, workerContext: ctx, cancel: cancel}, nil
 }
 
-// Execute serializes one durable operation and never runs an updater for a
-// replayed key. A nil updater intentionally provides no execution path.
+// Execute durably admits work before returning. Request cancellation cannot stop an
+// accepted operation; Close cancels and joins workers before their stores close.
 func (executor *Executor) Execute(ctx context.Context, key string) (Operation, error) {
-	if ctx == nil {
-		return Operation{}, executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
-	}
-	if executor.updater == nil {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	if executor.closed || ctx == nil || executor.updater == nil {
 		return Operation{}, executionError("geodata_update_unavailable", http.StatusServiceUnavailable)
 	}
 	operation, settings, replayed, err := executor.service.BeginUpdateSnapshot(ctx, key)
@@ -54,9 +60,28 @@ func (executor *Executor) Execute(ctx context.Context, key string) (Operation, e
 		return Operation{}, admissionError(err)
 	}
 	if replayed {
-		return operation, operationError(operation)
+		return operation, nil
 	}
+	executor.workers.Add(1)
+	go func() {
+		defer executor.workers.Done()
+		if _, err := executor.executeAdmitted(executor.workerContext, operation, settings); err != nil {
+			log.Printf("geodata operation=%s result=%v", operation.ID, err)
+		}
+	}()
+	return operation, nil
+}
 
+func (executor *Executor) Close() error {
+	executor.mu.Lock()
+	executor.closed = true
+	executor.cancel()
+	executor.mu.Unlock()
+	executor.workers.Wait()
+	return nil
+}
+
+func (executor *Executor) executeAdmitted(ctx context.Context, operation Operation, settings VersionedSettings) (Operation, error) {
 	config, err := RuntimeConfig(executor.base, settings.Settings)
 	if err != nil {
 		if finishErr := executor.finishFailure(ctx, operation.ID, FailureUpdateFailed); finishErr != nil {
@@ -70,6 +95,10 @@ func (executor *Executor) Execute(ctx context.Context, key string) (Operation, e
 		defer cancel()
 		return executor.service.store.saveReport(checkpointCtx, operation.ID, &report)
 	})
+	if ctx.Err() != nil {
+		report.Issues = append([]api.GeodataIssue{{Process: report.Process, Stage: report.Stage,
+			Code: string(FailureInterrupted), Message: "Обновление прервано при остановке helper", At: time.Now().UnixMilli()}}, report.Issues...)
+	}
 	finishCtx, cancel := completionContext(ctx)
 	defer cancel()
 	failed := false

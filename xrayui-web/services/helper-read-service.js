@@ -38,8 +38,10 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
       : sizeLimit ? `Размер файла геобазы превышает заданный лимит — ${update.maxAssetSizeMB} МБ`
       : update.operation?.errorCode === 'geodata_interrupted' ? 'Предыдущее обновление прервано; подробности в журнале'
       : 'Обновление не выполнено; откройте подробности операции';
+    const running = update.operation?.state === 'running';
+    const progressLabel = running ? `${report?.process === 'custom' ? 'Пользовательские базы' : report?.process === 'external' ? 'Внешние базы' : 'Обновление геобаз'} · ${stages[report?.stage] || 'Подготовка'}` : '';
     const state = recoveryBlocked || failedOperation || missing ? 'error' : 'ok';
-    const label = recoveryBlocked ? 'Требуется восстановление геоданных'
+    const label = running ? progressLabel : recoveryBlocked ? 'Требуется восстановление геоданных'
       : failedOperation ? failureLabel : missing ? 'Отсутствуют файлы геоданных' : 'Геобазы обновлены';
     const enabled = settings.schedule?.enabled === true;
 
@@ -67,6 +69,7 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
       operation: update.operation || null,
       activation,
       failureLabel,
+      progressLabel,
       nextScheduledAt: update.nextScheduledAt || null,
       recovery: update.recovery,
       health: {

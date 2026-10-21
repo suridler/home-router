@@ -295,3 +295,66 @@ test('pending addition prevents duplicate POST and preserves input changed durin
   assert.equal(app.proxyDomainInput, 'next.example');
   assert.equal(app.pendingAction, '');
 });
+
+test('geodata update returns after admission and polling refreshes resources on completion', async () => {
+  const app = appFixture();
+  app.status = { controlEnabled: true };
+  app.proxyDomains = snapshot('old.example');
+  const operation = { id: 'async-operation', state: 'running' };
+  let state = 'running';
+  let starts = 0;
+  let resourceReads = 0;
+  app.loadStatus = async () => {};
+  app.loadProxyDomains = async () => { resourceReads++; };
+  app.api = async (url, options = {}) => {
+    if (url === '/api/geodata/update') {
+      starts++;
+      assert.equal(options.timeoutMs, undefined);
+      return { operation };
+    }
+    if (url === '/api/settings/geodata') return { operation: { ...operation, state }, settings: {}, progressLabel: 'Внешние базы · Скачивание' };
+    throw new Error(`unexpected ${url}`);
+  };
+  await app.updateGeodata();
+  assert.equal(starts, 1);
+  assert.equal(app.pendingAction, '');
+  assert.equal(app.geodata.operation.state, 'running');
+  assert.match(app.geodataMessage, /Скачивание/);
+  await app.updateGeodata();
+  assert.equal(starts, 1);
+  state = 'succeeded';
+  await app.loadGeodata();
+  assert.equal(resourceReads, 1);
+  assert.equal(app.geodataMessage, '');
+});
+
+test('reopened page observes a running geodata update and later shows its failure stage', async () => {
+  const app = appFixture();
+  let state = 'running';
+  app.loadStatus = async () => {};
+  app.loadProxyDomains = async () => {};
+  app.api = async url => {
+    assert.equal(url, '/api/settings/geodata');
+    return { operation: { id: 'restored-operation', state }, settings: {},
+      progressLabel: 'Внешние базы · Скачивание', failureLabel: 'Контрольная сумма · geosite.dat: не совпадает' };
+  };
+  await app.loadGeodata();
+  assert.match(app.geodataMessage, /Скачивание/);
+  state = 'failed';
+  await app.loadGeodata();
+  assert.match(app.geodataMessage, /Контрольная сумма.*geosite.dat/);
+});
+
+test('geodata admission error is not hidden by a previous update failure', async () => {
+  const app = appFixture();
+  app.status = { controlEnabled: true };
+  app.loadStatus = async () => {};
+  const previous = { settings: {}, operation: { state: 'failed' }, failureLabel: 'Old checksum error' };
+  app.geodata = previous;
+  app.api = async url => {
+    if (url === '/api/geodata/update') throw new Error('New update admission rejected');
+    return previous;
+  };
+  await app.updateGeodata();
+  assert.equal(app.geodataMessage, 'New update admission rejected');
+});
