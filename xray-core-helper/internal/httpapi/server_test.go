@@ -344,3 +344,25 @@ func TestRequestBodyLimitAppliesToUnknownLengthBodies(t *testing.T) {
 		t.Fatalf("error code = %q", payload.Error.Code)
 	}
 }
+
+func TestOverviewKeepsConfigFailureVisibleAndRejectsWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{broken`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer("test", xrayconfig.NewReader(xrayconfig.Settings{Config: path}), nil, nil)
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest("GET", "/v1/xray/overview", nil))
+	var overview api.XrayOverviewResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &overview); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || overview.Status.ConfigState != "invalid" || overview.Status.ConfigParsed {
+		t.Fatalf("status=%d configState=%s", response.Code, overview.Status.ConfigState)
+	}
+	response = httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest("POST", "/v1/xray/overview", strings.NewReader(`{}`)))
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d", response.Code)
+	}
+}

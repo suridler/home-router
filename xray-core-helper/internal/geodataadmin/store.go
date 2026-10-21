@@ -10,11 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 )
 
 const operationTable = "geodata_update_operation"
@@ -119,24 +120,12 @@ func Open(ctx context.Context, path string, initial bootstrap.GeodataConfig) (*S
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, fmt.Errorf("create geodata database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{BusyTimeout: 10 * time.Second, WAL: true, ForeignKeys: true})
 	if err != nil {
 		return nil, fmt.Errorf("open geodata database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &Store{db: db}
-	for _, statement := range []string{
-		"PRAGMA busy_timeout = 10000",
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = FULL",
-		"PRAGMA foreign_keys = ON",
-	} {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("initialize geodata database: %w", err)
-		}
-	}
+
 	if err := store.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err

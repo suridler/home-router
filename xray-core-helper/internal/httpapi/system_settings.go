@@ -24,7 +24,7 @@ func registerSystemSettings(mux *http.ServeMux, service SystemSettingsService) {
 			writeJSON(w, http.StatusOK, service.Get(r.Context()))
 		},
 		http.MethodPut: func(w http.ResponseWriter, r *http.Request) {
-			request, ok := decodeUniqueBody[api.UpdateSystemSettingsRequest](w, r)
+			request, ok := decodeBody[api.UpdateSystemSettingsRequest](w, r)
 			if !ok {
 				return
 			}

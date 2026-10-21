@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -56,7 +54,7 @@ func NewSetupServer(version string, service SetupService, web ...api.WebSettings
 	}}))
 	mux.HandleFunc("/v1/setup/plan", methods(map[string]http.HandlerFunc{http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
 		var request api.SetupPlanRequest
-		if !decodeUniqueBodyInto(w, r, &request) {
+		if !decodeBodyInto(w, r, &request) {
 			return
 		}
 		var plan setup.Plan
@@ -86,7 +84,7 @@ func NewSetupServer(version string, service SetupService, web ...api.WebSettings
 	}}))
 	mux.HandleFunc("/v1/setup/apply", methods(map[string]http.HandlerFunc{http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
 		var request setup.Plan
-		if !decodeUniqueBodyInto(w, r, &request) {
+		if !decodeBodyInto(w, r, &request) {
 			return
 		}
 		result, err := service.Apply(r.Context(), request)
@@ -100,7 +98,7 @@ func NewSetupServer(version string, service SetupService, web ...api.WebSettings
 		var request struct {
 			ConfigFingerprint string `json:"configFingerprint"`
 		}
-		if !decodeUniqueBodyInto(w, r, &request) {
+		if !decodeBodyInto(w, r, &request) {
 			return
 		}
 		adopter, ok := service.(interface {
@@ -134,20 +132,6 @@ func NewSetupServer(version string, service SetupService, web ...api.WebSettings
 	return &http.Server{Handler: limitRequestBody(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 }
 
-func decodeUniqueBodyInto(w http.ResponseWriter, r *http.Request, target any) bool {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		writeAPIError(w, 400, "invalid_request", "request body is invalid")
-		return false
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeAPIError(w, 400, "invalid_request", "request body must contain one JSON object")
-		return false
-	}
-	return true
-}
 func writeSetupError(w http.ResponseWriter, err error) {
 	var preflight *setup.PreflightError
 	if errors.As(err, &preflight) {

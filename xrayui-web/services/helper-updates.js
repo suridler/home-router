@@ -47,19 +47,11 @@ function createHelperUpdateService({ helperClient }) {
     prepareUpdate,
     applyUpdate,
     retryUpdate,
-    rollbackUpdate,
-    // Short aliases keep the facade convenient without changing the wire API.
-    getUpdate: getUpdateStatus,
-    checkForUpdate: checkUpdate,
-    prepare: prepareUpdate,
-    apply: applyUpdate,
-    retry: retryUpdate,
-    rollback: rollbackUpdate
+    rollbackUpdate
   };
 }
 
 module.exports = {
   UPDATE_PATH,
-  createHelperUpdateService,
-  createHelperUpdatesService: createHelperUpdateService
+  createHelperUpdateService
 };

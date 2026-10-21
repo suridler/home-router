@@ -20,8 +20,7 @@ function createBackend({ client = helperClient, trafficReader = createExporterTr
     ...helperUpdates,
     helperClient: client,
     controlEnabled,
-    bootstrapToken: config.bootstrapToken,
-    geodataBinaryPath: undefined
+    bootstrapToken: config.bootstrapToken
   };
 }
 

@@ -3,13 +3,12 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"home-router/xray-core-helper/internal/geodatalimits"
 	"io"
 	"net/http"
 
 	"home-router/xray-core-helper/internal/api"
+	"home-router/xray-core-helper/internal/geodatalimits"
 )
 
 type GeodataAdminService interface {
@@ -52,12 +51,12 @@ func getGeodataSettings(service GeodataAdminService) http.HandlerFunc {
 
 func putGeodataSettings(service GeodataAdminService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		request, ok := decodeUniqueBody[api.ReplaceGeodataSettingsRequest](w, r)
+		request, ok := decodeBody[api.ReplaceGeodataSettingsRequest](w, r)
 		if !ok {
 			return
 		}
-		if request.ExpectedGeneration == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "expectedGeneration is required")
+		if request.ExpectedGeneration == nil || request.Settings.Origins == nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "expectedGeneration and settings.origins are required")
 			return
 		}
 		if service == nil {
@@ -145,92 +144,4 @@ func postGeodataUpdate(executor GeodataUpdateExecutor) http.HandlerFunc {
 		}
 		writeJSON(w, status, api.GeodataUpdateResponse{Operation: operation})
 	}
-}
-
-func decodeUniqueBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
-	var value T
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
-		return value, false
-	}
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 || trimmed[0] != '{' || validateUniqueJSON(trimmed) != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body must be one valid JSON object")
-		return value, false
-	}
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
-		return value, false
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON object")
-		return value, false
-	}
-	return value, true
-}
-
-func validateUniqueJSON(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := uniqueJSONValue(decoder); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return errors.New("trailing JSON value")
-	}
-	return nil
-}
-
-func uniqueJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	switch value := token.(type) {
-	case nil:
-		return errors.New("null values are not allowed")
-	case json.Delim:
-		switch value {
-		case '{':
-			seen := make(map[string]struct{})
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return errors.New("object key is not a string")
-				}
-				if _, exists := seen[key]; exists {
-					return errors.New("duplicate object key")
-				}
-				seen[key] = struct{}{}
-				if err := uniqueJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim('}') {
-				return errors.New("object is incomplete")
-			}
-		case '[':
-			for decoder.More() {
-				if err := uniqueJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim(']') {
-				return errors.New("array is incomplete")
-			}
-		default:
-			return errors.New("unexpected JSON delimiter")
-		}
-	}
-	return nil
 }

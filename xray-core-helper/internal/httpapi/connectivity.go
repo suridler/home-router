@@ -11,7 +11,7 @@ func registerConnectivity(mux *http.ServeMux, services ServerServices) {
 		var request struct {
 			OutboundTag string `json:"outboundTag"`
 		}
-		if !decodeUniqueBodyInto(w, r, &request) {
+		if !decodeBodyInto(w, r, &request) {
 			return
 		}
 		if services.Connectivity == nil {

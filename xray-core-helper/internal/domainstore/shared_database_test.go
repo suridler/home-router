@@ -87,9 +87,10 @@ func TestSharedDatabaseReopensAfterSafeApplyInitialization(t *testing.T) {
 	}
 }
 
-func TestSharedDatabaseStillRejectsUnknownObjects(t *testing.T) {
+func TestSharedDatabasePreservesOtherModulesObjects(t *testing.T) {
 	for name, statement := range map[string]string{
 		"table":   `CREATE TABLE unexpected_table (value TEXT)`,
+		"legacy":  `CREATE TABLE domains (domain TEXT PRIMARY KEY, desired INTEGER NOT NULL, baseline INTEGER NOT NULL); INSERT INTO domains VALUES ('legacy.example',1,1)`,
 		"index":   `CREATE INDEX unexpected_index ON safe_apply_transaction(template_id)`,
 		"view":    `CREATE VIEW unexpected_view AS SELECT state FROM safe_apply_transaction`,
 		"trigger": `CREATE TRIGGER unexpected_trigger AFTER INSERT ON safe_apply_transaction BEGIN SELECT 1; END`,
@@ -115,13 +116,46 @@ func TestSharedDatabaseStillRejectsUnknownObjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			store, err := domainstore.Open(ctx, path)
-			if err == nil {
-				store.Close()
-				t.Fatal("unknown schema object accepted")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !strings.Contains(err.Error(), "unexpected_"+name) {
-				t.Fatalf("wrong rejection: %v", err)
+			if err = store.AddDesired(ctx, "keep.example"); err != nil {
+				t.Fatal(err)
 			}
+			if err = store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = domainstore.Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := store.Snapshot(ctx)
+			if err != nil || len(snapshot.Desired) != 1 || snapshot.Desired[0] != "keep.example" {
+				t.Fatalf("domain state lost: %#v, %v", snapshot, err)
+			}
+			if err = store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err = sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var count int
+			objectName := "unexpected_" + name
+			if name == "legacy" {
+				objectName = "domains"
+			}
+			if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = ?", objectName).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("foreign object lost: count=%d, error=%v", count, err)
+			}
+			if name == "legacy" {
+				var desired, baseline int
+				if err := db.QueryRowContext(ctx, "SELECT desired,baseline FROM domains WHERE domain='legacy.example'").Scan(&desired, &baseline); err != nil || desired != 1 || baseline != 1 {
+					t.Fatalf("legacy data changed: desired=%d baseline=%d error=%v", desired, baseline, err)
+				}
+			}
+
 		})
 	}
 }

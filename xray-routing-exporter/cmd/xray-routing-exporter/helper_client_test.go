@@ -24,7 +24,8 @@ func TestHelperClientFetchesTypedMetadataOverUnixSocket(t *testing.T) {
 			"outboundTags":["proxy","direct"],
 			"generation":7,
 			"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"modifiedAt":"2026-10-09T12:00:00Z"
+			"modifiedAt":"2026-10-09T12:00:00Z",
+			"futureField":{"nested":true}
 		}`))
 	}, time.Second)
 
@@ -59,7 +60,6 @@ func TestHelperClientRejectsIncompatibleResponses(t *testing.T) {
 		body string
 	}{
 		{name: "malformed", body: `{`},
-		{name: "unknown field", body: `{"api":"127.0.0.1:10085","inboundTags":[],"outboundTags":[],"generation":1,"contentHash":"` + validHash + `","modifiedAt":"2026-10-09T12:00:00Z","settings":{}}`},
 		{name: "missing tags", body: `{"api":"127.0.0.1:10085","generation":1,"contentHash":"` + validHash + `","modifiedAt":"2026-10-09T12:00:00Z"}`},
 		{name: "invalid api", body: `{"api":"https://127.0.0.1:10085","inboundTags":[],"outboundTags":[],"generation":1,"contentHash":"` + validHash + `","modifiedAt":"2026-10-09T12:00:00Z"}`},
 		{name: "invalid hash", body: `{"api":"127.0.0.1:10085","inboundTags":[],"outboundTags":[],"generation":1,"contentHash":"secret","modifiedAt":"2026-10-09T12:00:00Z"}`},

@@ -323,7 +323,9 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 		Services:     serviceController, Logs: logReadService, Errors: errorHistory,
 		Logging: logMutationService, Readiness: readinessService, Templates: templateProjection, Settings: settingsService, Backups: backupStore, AcceptSystem: acceptSystemEngine, ApplyTemplate: safeApplyService,
 	})
-	server.Handler = xrayservice.Guard(server.Handler, a.installation, xrayservice.New().Resolve)
+	server.Handler = xrayservice.Guard(server.Handler, a.installation, xrayservice.New().Resolve, func(r *http.Request) bool {
+		return httpapi.IndependentNativeOperation(r, safeApplyStore.Transaction)
+	})
 	return &normalBundle{
 		handler:      server.Handler,
 		server:       server,

@@ -81,7 +81,6 @@ func (client *HelperClient) FetchMetadata(ctx context.Context) (HelperMetadata, 
 		return HelperMetadata{}, ErrIncompatibleHelperResponse
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
 	var metadata HelperMetadata
 	if err := decoder.Decode(&metadata); err != nil {
 		return HelperMetadata{}, ErrIncompatibleHelperResponse

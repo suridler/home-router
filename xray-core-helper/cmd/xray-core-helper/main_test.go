@@ -348,3 +348,17 @@ func TestGeodataErrorWithOperationPreservesCode(t *testing.T) {
 		t.Fatal(stderr.String())
 	}
 }
+
+func TestResponseDecoderAcceptsAdditionalFields(t *testing.T) {
+	var value struct {
+		Status string `json:"status"`
+	}
+	if err := decodeResponseJSON([]byte(`{"status":"ok","newField":{"nested":true}}`), &value); err != nil || value.Status != "ok" {
+		t.Fatalf("value=%+v error=%v", value, err)
+	}
+	for _, body := range []string{`{"status":1}`, `{"status":"ok"}{}`} {
+		if err := decodeResponseJSON([]byte(body), &value); err == nil {
+			t.Fatalf("accepted %s", body)
+		}
+	}
+}

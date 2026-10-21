@@ -11,7 +11,7 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
     return helperClient.request('GET', `/v1/logs/${encodeURIComponent(kind)}?limit=${limit}`);
   }
 
-  async function getGeodataStatus() {
+  async function readGeodataStatus() {
     const [assets, update] = await Promise.all([
       helperClient.request('GET', '/v1/xray/geodata'),
       helperClient.request('GET', '/v1/xray/geodata/update/status')
@@ -82,21 +82,22 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
 
   const observe = (path, fallback) => helperClient.request('GET', path).catch(() => ({ ...fallback, unavailable: true }));
 
-  async function getRouterStatus() {
-    const [readiness, runtime, status, inbounds, outbounds, routing, logging, diagnostics, geodataStatus, helperHealth, setupState, errorHistory] = await Promise.all([
+  async function readRouterStatus() {
+    const [readiness, overview, diagnostics, geodataStatus, helperHealth, setupState, errorHistory] = await Promise.all([
       helperClient.request('GET', '/v1/ready', { acceptStatuses: [503] }),
-      observe('/v1/xray/runtime', {}),
-      observe('/v1/xray/status', {}),
-      observe('/v1/xray/inbounds', {}),
-      observe('/v1/xray/outbounds', {}),
-      observe('/v1/xray/routing', {}),
-      observe('/v1/xray/logging', {}),
+      observe('/v1/xray/overview', {}),
       observe('/v1/xray/diagnostics', {}),
       getGeodataStatus().catch(() => ({ files: [], health: { state: 'unknown', label: 'Состояние геоданных недоступно' } })),
       helperClient.request('GET', '/v1/health').catch(() => null),
       helperClient.request('GET', '/v1/setup').catch(() => null),
       helperClient.request('GET', '/v1/errors?limit=5').catch(() => ({ errors: [], unavailable: true }))
     ]);
+    const status = overview.status || {};
+    const runtime = status.runtime || {};
+    const inbounds = overview.inbounds || {};
+    const outbounds = overview.outbounds || {};
+    const routing = overview.routing || {};
+    const logging = overview.logging || {};
     const checks = new Map((diagnostics.checks || []).map(check => [check.name, check.status]));
     const xrayIsActive = checks.get('xray_service_active') === 'ok';
     const systemOK = checks.get('tproxy_service_active') === 'ok' && (diagnostics.checks || []).every(check => ['ok', 'unchecked', 'not_declared'].includes(check.status));
@@ -108,13 +109,7 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
       outbounds: outbounds.outbounds || []
     }, runtime.api, runtime.binary);
 
-    const networkProfile = {
-      gateway: null, upstream: null, subnet: setupState?.operation?.lanNetwork || null,
-      interface: setupState?.operation?.networkInterface || null,
-      fwmark: null, table: null,
-      mode: checks.get('tproxy_service_active') === 'ok' ? 'tproxy-service-active' : 'direct-or-unconfigured',
-      xrayUnit: 'xray.service', nftTable: null
-    };
+    const networkProfile = networkConfiguration(setupState, checks);
     return {
       status: overallState === 'ok' ? 'ready' : 'degraded',
       xray: xrayIsActive ? 'running' : checks.get('xray_service_active') === 'mismatch' ? 'stopped' : 'unavailable',
@@ -182,11 +177,41 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
     };
   }
 
+  function networkConfiguration(setupState, checks) {
+    return {
+      gateway: null, upstream: null, subnet: setupState?.operation?.lanNetwork || null,
+      interface: setupState?.operation?.networkInterface || null,
+      fwmark: null, table: null,
+      mode: checks.get('tproxy_service_active') === 'ok' ? 'tproxy-service-active' : 'direct-or-unconfigured',
+      xrayUnit: 'xray.service', nftTable: null
+    };
+  }
+
+  async function getRouterConfig() {
+    const [setup, diagnostics] = await Promise.all([
+      helperClient.request('GET', '/v1/setup').catch(() => null),
+      observe('/v1/xray/diagnostics', {})
+    ]);
+    return networkConfiguration(setup, new Map((diagnostics.checks || []).map(check => [check.name, check.status])));
+  }
+
+  // Share only requests that are currently running. Do not retain status after
+  // completion: the next poll must see mutations and background job progress.
+  function shareInFlight(read) {
+    let pending;
+    return function () {
+      if (!pending) pending = read().finally(() => { pending = null; });
+      return pending;
+    };
+  }
+  const getGeodataStatus = shareInFlight(readGeodataStatus);
+  const getRouterStatus = shareInFlight(readRouterStatus);
+
   async function getErrorHistory() {
     return helperClient.request('GET', '/v1/errors?limit=100');
   }
 
-  return { getGeodataStatus, getRouterStatus, getErrorHistory, readLog };
+  return { getGeodataStatus, getRouterStatus, getRouterConfig, getErrorHistory, readLog };
 }
 
 module.exports = { createHelperReadService };

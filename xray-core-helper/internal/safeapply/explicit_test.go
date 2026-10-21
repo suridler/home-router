@@ -76,7 +76,7 @@ func TestCancelRebootIsExplicitDurableAndDoesNotChangeRuntime(t *testing.T) {
 	if pending, err := service.Recover(ctx); err != nil || pending != nil {
 		t.Fatal("same boot reintroduced gate", pending, err)
 	}
-	history, err := service.store.byID(ctx, value.ID)
+	history, err := service.store.Transaction(ctx, value.ID)
 	if err != nil || history.State != StateRebootCancelled {
 		t.Fatal("history lost", history, err)
 	}

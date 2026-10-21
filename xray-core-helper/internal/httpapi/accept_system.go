@@ -15,7 +15,7 @@ type AcceptSystemService interface {
 }
 
 func acceptSystem(w http.ResponseWriter, r *http.Request, service AcceptSystemService, id templatecatalog.ID) {
-	request, ok := decodeUniqueBody[api.AcceptSystemRequest](w, r)
+	request, ok := decodeBody[api.AcceptSystemRequest](w, r)
 	if !ok {
 		return
 	}

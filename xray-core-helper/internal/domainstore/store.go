@@ -11,8 +11,7 @@ import (
 	"strings"
 
 	"home-router/xray-core-helper/internal/domain"
-
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 )
 
 const schemaVersion = 2
@@ -51,25 +50,6 @@ var (
 	ErrConsolidationNotActive  = errors.New("domain consolidation is not active")
 )
 
-// The helper components share one SQLite database. Permit their fixed schema
-// objects, including the safe-apply index created after domain initialization.
-var helperObjects = map[string]struct{}{
-	"xray_error_history": {}, "xray_error_seen": {}, "xray_error_collection": {},
-	"config_state":             {},
-	"config_transaction":       {},
-	"geodata_admin_settings":   {},
-	"geodata_admin_origin":     {},
-	"geodata_update_operation": {},
-	"geodata_update_history":   {},
-	"geodata_pending_baseline": {},
-	"helper_schedule":          {},
-	"safe_apply_transaction":   {},
-	"safe_apply_one_pending":   {},
-	"safe_apply_reboot":        {},
-	"safe_apply_baseline":      {},
-	"safe_apply_restore":       {},
-}
-
 type Store struct {
 	db *sql.DB
 }
@@ -87,17 +67,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, fmt.Errorf("create domain database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("open domain database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &Store{db: db}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("open domain database: %w", err)
-	}
 	if err := store.initializeSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -136,10 +110,6 @@ func (store *Store) initializeSchema(ctx context.Context) error {
 			hasState = true
 		case controlTable:
 			hasControl = true
-		default:
-			if _, ok := helperObjects[name]; !ok {
-				return fmt.Errorf("unsupported domain database object %q", name)
-			}
 		}
 	}
 

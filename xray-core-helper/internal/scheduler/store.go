@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 )
 
 // Store persists daily deadlines in the existing helper database. Missed days
@@ -14,13 +14,11 @@ import (
 type Store struct{ db *sql.DB }
 
 func Open(ctx context.Context, path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{BusyTimeout: 5 * time.Second})
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `PRAGMA busy_timeout=5000;
-	 CREATE TABLE IF NOT EXISTS helper_schedule (name TEXT PRIMARY KEY, due INTEGER NOT NULL);`)
+	_, err = db.ExecContext(ctx, `	 CREATE TABLE IF NOT EXISTS helper_schedule (name TEXT PRIMARY KEY, due INTEGER NOT NULL);`)
 	if err != nil {
 		db.Close()
 		return nil, err

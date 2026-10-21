@@ -165,8 +165,12 @@ func uniqueTags(value any) []string {
 }
 
 func (reader Reader) Status(ctx context.Context) api.StatusResponse {
-	status := api.StatusResponse{Runtime: reader.Runtime()}
 	doc, err := reader.readDocument(ctx)
+	return statusProjection(reader.Runtime(), doc, err)
+}
+
+func statusProjection(runtime api.RuntimeResponse, doc *document, err error) api.StatusResponse {
+	status := api.StatusResponse{Runtime: runtime}
 	if err != nil {
 		status.ConfigState = "unavailable"
 		var projectionErr *projectionError
@@ -211,6 +215,10 @@ func (reader Reader) Inbounds(ctx context.Context) (api.InboundsResponse, error)
 	if err != nil {
 		return api.InboundsResponse{}, err
 	}
+	return inboundsProjection(doc), nil
+}
+
+func inboundsProjection(doc *document) api.InboundsResponse {
 	items := make([]api.InboundProjection, 0)
 	for _, value := range asSlice(doc.value["inbounds"]) {
 		inbound := asMap(value)
@@ -221,7 +229,7 @@ func (reader Reader) Inbounds(ctx context.Context) (api.InboundsResponse, error)
 			Protocol: safeString(inbound["protocol"]),
 		})
 	}
-	return api.InboundsResponse{ConfigMetadata: doc.metadata, Inbounds: items}, nil
+	return api.InboundsResponse{ConfigMetadata: doc.metadata, Inbounds: items}
 }
 
 func (reader Reader) Outbounds(ctx context.Context) (api.OutboundsResponse, error) {
@@ -229,6 +237,10 @@ func (reader Reader) Outbounds(ctx context.Context) (api.OutboundsResponse, erro
 	if err != nil {
 		return api.OutboundsResponse{}, err
 	}
+	return outboundsProjection(doc), nil
+}
+
+func outboundsProjection(doc *document) api.OutboundsResponse {
 	items := make([]api.OutboundProjection, 0)
 	for _, value := range asSlice(doc.value["outbounds"]) {
 		outbound := asMap(value)
@@ -237,7 +249,7 @@ func (reader Reader) Outbounds(ctx context.Context) (api.OutboundsResponse, erro
 			Protocol: safeString(outbound["protocol"]),
 		})
 	}
-	return api.OutboundsResponse{ConfigMetadata: doc.metadata, Outbounds: items}, nil
+	return api.OutboundsResponse{ConfigMetadata: doc.metadata, Outbounds: items}
 }
 
 func (reader Reader) Routing(ctx context.Context) (api.RoutingResponse, error) {
@@ -245,6 +257,10 @@ func (reader Reader) Routing(ctx context.Context) (api.RoutingResponse, error) {
 	if err != nil {
 		return api.RoutingResponse{}, err
 	}
+	return routingProjection(doc), nil
+}
+
+func routingProjection(doc *document) api.RoutingResponse {
 	routing := asMap(doc.value["routing"])
 	routingNode := doc.spans.object["routing"]
 	var ruleNodes []*jsonNode
@@ -287,7 +303,7 @@ func (reader Reader) Routing(ctx context.Context) (api.RoutingResponse, error) {
 		DomainStrategy: safeString(routing["domainStrategy"]),
 		Rules:          rules,
 		Balancers:      balancers,
-	}, nil
+	}
 }
 
 func (reader Reader) Logging(ctx context.Context) (api.LoggingResponse, error) {
@@ -295,6 +311,10 @@ func (reader Reader) Logging(ctx context.Context) (api.LoggingResponse, error) {
 	if err != nil {
 		return api.LoggingResponse{}, err
 	}
+	return loggingProjection(doc), nil
+}
+
+func loggingProjection(doc *document) api.LoggingResponse {
 	logging := asMap(doc.value["log"])
 	return api.LoggingResponse{
 		ConfigMetadata: doc.metadata,
@@ -302,7 +322,7 @@ func (reader Reader) Logging(ctx context.Context) (api.LoggingResponse, error) {
 		Error:          safeString(logging["error"]),
 		Loglevel:       defaultString(safeString(logging["loglevel"]), "warning"),
 		DNSLog:         logging["dnsLog"] == true,
-	}, nil
+	}
 }
 
 func (reader Reader) Geodata(ctx context.Context) (api.GeodataResponse, error) {
@@ -816,4 +836,19 @@ func truncate(value string, maximum int) string {
 
 func isJSONSpace(value byte) bool {
 	return value == ' ' || value == '\t' || value == '\n' || value == '\r'
+}
+
+// Overview reads and parses JSONC once. Each projection carries the same
+// metadata; no cached document survives the request or hides an external edit.
+func (reader Reader) Overview(ctx context.Context) api.XrayOverviewResponse {
+	doc, err := reader.readDocument(ctx)
+	result := api.XrayOverviewResponse{Status: statusProjection(reader.Runtime(), doc, err)}
+	if err != nil {
+		return result
+	}
+	result.Inbounds = inboundsProjection(doc)
+	result.Outbounds = outboundsProjection(doc)
+	result.Routing = routingProjection(doc)
+	result.Logging = loggingProjection(doc)
+	return result
 }

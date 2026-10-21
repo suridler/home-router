@@ -1,11 +1,8 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,6 +10,7 @@ import (
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/coordinator"
 	"home-router/xray-core-helper/internal/fault"
+	"home-router/xray-core-helper/internal/jsonrequest"
 	"home-router/xray-core-helper/internal/transaction"
 	"home-router/xray-core-helper/internal/vless"
 	"home-router/xray-core-helper/internal/xrayconfig"
@@ -30,27 +28,16 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 
 func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var value T
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
-		return value, false
+	ok := decodeBodyInto(w, r, &value)
+	return value, ok
+}
+
+func decodeBodyInto(w http.ResponseWriter, r *http.Request, target any) bool {
+	if err := jsonrequest.Decode(r.Body, target); err != nil {
+		writeAPIError(w, 400, "invalid_request", "request body must contain one valid JSON object without unknown or repeated fields")
+		return false
 	}
-	if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || trimmed[0] != '{' {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON object")
-		return value, false
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
-		return value, false
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON object")
-		return value, false
-	}
-	return value, true
+	return true
 }
 
 func methods(handlers map[string]http.HandlerFunc) http.HandlerFunc {

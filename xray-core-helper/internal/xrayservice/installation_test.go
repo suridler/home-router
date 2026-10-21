@@ -3,6 +3,7 @@ package xrayservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,7 +66,7 @@ func TestEnvironmentAssetSubset(t *testing.T) {
 func TestPathDriftBlocksMutationsButRetainsReadAccess(t *testing.T) {
 	i := Installation{Unit: "xray.service", Config: "/etc/xray/a.json"}
 	called := 0
-	h := Guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called++; w.WriteHeader(204) }), i, func(context.Context) (Installation, error) { return Installation{Config: "/etc/xray/b.json"}, nil })
+	h := Guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called++; w.WriteHeader(204) }), i, func(context.Context) (Installation, error) { return Installation{Config: "/etc/xray/b.json"}, nil }, nil)
 	for _, test := range []struct {
 		method string
 		want   int
@@ -276,5 +277,34 @@ func TestResolveEnvironmentFileFailuresStayErrors(t *testing.T) {
 				t.Fatalf("%s environment file accepted", test.name)
 			}
 		})
+	}
+}
+
+func TestPathDiscoveryDoesNotGateIndependentMaintenance(t *testing.T) {
+	resolutions := 0
+	handled := 0
+	handler := Guard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { handled++; w.WriteHeader(204) }), Installation{}, func(context.Context) (Installation, error) {
+		resolutions++
+		return Installation{}, errors.New("service unavailable")
+	}, nil)
+	for _, path := range []string{"/v1/errors/collect", "/v1/network/probe", "/v1/templates/refresh"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("POST", path, nil))
+		if response.Code != 204 {
+			t.Fatalf("%s: HTTP %d", path, response.Code)
+		}
+	}
+	if resolutions != 0 || handled != 3 {
+		t.Fatalf("resolutions=%d handled=%d", resolutions, handled)
+	}
+	for _, path := range []string{"/v1/xray/config/adopt", "/v1/proxy-domains/reconcile", "/v1/safe-apply/tx/rollback"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("POST", path, nil))
+		if response.Code != http.StatusConflict {
+			t.Fatalf("%s: HTTP %d", path, response.Code)
+		}
+	}
+	if handled != 3 {
+		t.Fatal("dependent operation reached handler")
 	}
 }

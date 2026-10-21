@@ -38,7 +38,7 @@ func TestScheduledJobsPreserveAPIGates(t *testing.T) {
 					return xrayservice.Installation{}, nil
 				}
 				return expected, nil
-			})
+			}, nil)
 			done := make(chan struct{})
 			go func() { defer close(done); _ = server.Serve(listener) }()
 			defer func() { _ = server.Close(); <-done }()
@@ -47,7 +47,7 @@ func TestScheduledJobsPreserveAPIGates(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				err := job.Run(ctx, time.Date(2026, 10, 18, 4, 0, 0, 0, time.Local))
 				cancel()
-				blocked := gate == "paths_changed" || (gate == "pending" && job.Name != "errors")
+				blocked := gate != "open" && job.Name != "errors"
 				if (err != nil) != blocked {
 					t.Fatalf("%s gate %s: %v", job.Name, gate, err)
 				}
@@ -57,9 +57,6 @@ func TestScheduledJobsPreserveAPIGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantErrors, wantWrites := 1, 1
-			if gate == "paths_changed" {
-				wantErrors = 0
-			}
 			if gate != "open" {
 				wantWrites = 0
 			}

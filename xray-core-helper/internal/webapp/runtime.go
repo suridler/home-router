@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"home-router/xray-core-helper/internal/commandrunner"
+
+	"home-router/xray-core-helper/internal/atomicfile"
 )
 
 const EnvironmentPath = "/run/xray-core-helper/web.env"
@@ -198,37 +200,13 @@ func write(path string, raw []byte, mode os.FileMode, gid int) error {
 	if err := syncDir(filepath.Dir(filepath.Dir(path))); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".web-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err = f.Chown(os.Geteuid(), gid); err != nil {
-		return err
-	}
-	if err = f.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err = f.Write(raw); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(path))
+	_, err := atomicfile.Write(path, raw, func(f *os.File) error {
+		if err := f.Chown(os.Geteuid(), gid); err != nil {
+			return err
+		}
+		return f.Chmod(mode)
+	})
+	return err
 }
-func syncDir(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
-}
+
+func syncDir(path string) error { return atomicfile.SyncDir(path) }

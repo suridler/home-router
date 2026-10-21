@@ -80,7 +80,7 @@ func TestManualRebootStateSurvivesRestartAndClearsOnlyAfterBootChange(t *testing
 	if pending, err = service.Pending(ctx); err != nil || pending != nil {
 		t.Fatal("reboot gate remained after resolution")
 	}
-	resolved, err := store.byID(ctx, transaction.ID)
+	resolved, err := store.Transaction(ctx, transaction.ID)
 	if err != nil || resolved.State != StateRolledBack {
 		t.Fatal("rollback not durably completed", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"home-router/xray-core-helper/internal/atomicfile"
 	"home-router/xray-core-helper/internal/commandrunner"
 )
 
@@ -118,37 +119,13 @@ func execute(root, target string) error {
 	return write(target, value.Content, os.FileMode(value.Mode), value.UID, value.GID)
 }
 func write(path string, raw []byte, mode os.FileMode, uid, gid int) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".native-write-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err = f.Chown(uid, gid); err != nil {
-		return err
-	}
-	if err = f.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err = f.Write(raw); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(path))
+	_, err := atomicfile.Write(path, raw, func(f *os.File) error {
+		if err := f.Chown(uid, gid); err != nil {
+			return err
+		}
+		return f.Chmod(mode)
+	})
+	return err
 }
-func syncDirectory(path string) error {
-	f, e := os.Open(path)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
-}
+
+func syncDirectory(path string) error { return atomicfile.SyncDir(path) }

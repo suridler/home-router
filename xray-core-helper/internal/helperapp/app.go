@@ -155,7 +155,7 @@ func (a *application) buildSetup() (*setupBundle, error) {
 	setupService := setup.NewStartupService(a.setupStartup, discovery, engine)
 	server := httpapi.NewSetupServer(a.version, setupService, webSettingsResponse(a.config.Web, a.webEnabled))
 	expected := xrayservice.Installation{Unit: "xray.service", Binary: a.config.Xray.Binary, Config: a.config.Xray.Config, AssetDir: a.config.Xray.AssetDir}
-	server.Handler = xrayservice.Guard(server.Handler, expected, xrayservice.New().Resolve)
+	server.Handler = xrayservice.Guard(server.Handler, expected, xrayservice.New().Resolve, nil)
 	return &setupBundle{
 		service: setupService,
 		server:  server,

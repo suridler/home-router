@@ -8,8 +8,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 )
 
 var (
@@ -45,24 +46,12 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, fmt.Errorf("create transaction database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{BusyTimeout: 10 * time.Second, WAL: true, ForeignKeys: true})
 	if err != nil {
 		return nil, fmt.Errorf("open transaction database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &Store{db: db}
-	for _, statement := range []string{
-		"PRAGMA busy_timeout = 10000",
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = FULL",
-		"PRAGMA foreign_keys = ON",
-	} {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("initialize transaction database: %w", err)
-		}
-	}
+
 	if err := store.createSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err

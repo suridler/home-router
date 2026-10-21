@@ -299,20 +299,8 @@ func prepareCustomPath(files FileSystem, identity Identity, value string) (*path
 		return state, ErrUnsafeFilesystem
 	}
 
-	if err := entry.file.Chown(identity.UID, identity.GID); err != nil {
-		return state, ErrPreparation
-	}
-	if err := entry.file.Chmod(fileMode); err != nil {
-		return state, ErrPreparation
-	}
-	if !sameFile(parent, entry.name, entry.info) {
-		return state, ErrUnsafeFilesystem
-	}
-	if !fileMetadataMatches(entry.file, identity, fileMode) {
-		return state, ErrPreparation
-	}
-	if err := entry.file.Sync(); err != nil {
-		return state, ErrPreparation
+	if err := entry.prepare(parent, identity); err != nil {
+		return state, err
 	}
 	if err := parent.Sync(); err != nil {
 		return state, ErrPreparation

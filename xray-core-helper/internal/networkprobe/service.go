@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"home-router/xray-core-helper/internal/api"
+	"home-router/xray-core-helper/internal/atomicfile"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/commandrunner"
 )
@@ -255,31 +256,5 @@ func save(path string, history api.NetworkProbeHistory) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".network-probes-*")
-	if err != nil {
-		return false, err
-	}
-	defer os.Remove(temporary.Name())
-	if err = temporary.Chmod(0600); err == nil {
-		_, err = temporary.Write(encoded)
-	}
-	if err == nil {
-		err = temporary.Sync()
-	}
-	closeErr := temporary.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return false, err
-	}
-	if err = os.Rename(temporary.Name(), path); err != nil {
-		return false, err
-	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return true, err
-	}
-	defer directory.Close()
-	return true, directory.Sync()
+	return atomicfile.Write(path, encoded, func(f *os.File) error { return f.Chmod(0600) })
 }

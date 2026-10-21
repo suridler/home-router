@@ -27,7 +27,7 @@ func registerNetworkProbe(mux *http.ServeMux, service NetworkProbeService, apply
 		},
 		http.MethodPost: func(w http.ResponseWriter, r *http.Request) {
 			var request api.NetworkProbeRequest
-			if !decodeUniqueBodyInto(w, r, &request) {
+			if !decodeBodyInto(w, r, &request) {
 				return
 			}
 			if (request.Stage != "before" && request.Stage != "after" && request.Stage != "manual") || len(request.TransactionID) > 64 || (request.Stage != "after" && request.TransactionID != "") {

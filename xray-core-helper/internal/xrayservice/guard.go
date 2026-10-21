@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// Guard blocks new HTTP mutations when effective service paths have changed.
-// Reads remain available; no recovery evidence or filesystem grants are edited.
-func Guard(next http.Handler, expected Installation, resolve func(context.Context) (Installation, error)) http.Handler {
+// Guard checks service paths before operations that depend on the installed
+// Xray paths. Read-only probes and helper-local collection remain available.
+func Guard(next http.Handler, expected Installation, resolve func(context.Context) (Installation, error), independent func(*http.Request) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if requiresServicePaths(r) && (independent == nil || !independent(r)) {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			actual, err := resolve(ctx)
 			cancel()
@@ -23,4 +23,19 @@ func Guard(next http.Handler, expected Installation, resolve func(context.Contex
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func requiresServicePaths(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return false
+	}
+	// These fixed maintenance endpoints do not change Xray or system files.
+	// Transaction-specific exceptions are supplied by the owning API.
+	if r.Method == http.MethodPost {
+		switch r.URL.Path {
+		case "/v1/errors/collect", "/v1/network/probe", "/v1/templates/refresh":
+			return false
+		}
+	}
+	return true
 }

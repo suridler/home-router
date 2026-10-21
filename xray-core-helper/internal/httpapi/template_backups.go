@@ -76,7 +76,7 @@ func listTemplateBackups(w http.ResponseWriter, r *http.Request, service Templat
 }
 
 func restoreTemplateBackup(w http.ResponseWriter, r *http.Request, service TemplateBackupService, templates TemplateStatusService, id templatecatalog.ID, backupID string) {
-	request, ok := decodeUniqueBody[api.RestoreTemplateBackupRequest](w, r)
+	request, ok := decodeBody[api.RestoreTemplateBackupRequest](w, r)
 	if !ok {
 		return
 	}

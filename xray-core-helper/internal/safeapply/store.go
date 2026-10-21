@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 
 	"home-router/xray-core-helper/internal/templatecatalog"
 )
@@ -85,14 +85,12 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err = file.Close(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{BusyTimeout: 10 * time.Second, WAL: true})
 	if err != nil {
 		return nil, fmt.Errorf("open safe apply database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &Store{db: db, now: time.Now}
-	for _, statement := range []string{"PRAGMA busy_timeout = 10000", "PRAGMA journal_mode = WAL", "PRAGMA synchronous = FULL", `CREATE TABLE IF NOT EXISTS safe_apply_transaction (
+	for _, statement := range []string{`CREATE TABLE IF NOT EXISTS safe_apply_transaction (
 		transaction_id TEXT PRIMARY KEY, template_id TEXT NOT NULL, backup_id TEXT NOT NULL,
 		candidate_hash TEXT NOT NULL, deadline_ns INTEGER NOT NULL, phase TEXT NOT NULL,
 		state TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation >= 0)
@@ -158,7 +156,7 @@ func (store *Store) Advance(ctx context.Context, id string, from, to Phase) (Tra
 	if rows != 1 {
 		return Transaction{}, ErrPhase
 	}
-	return store.byID(ctx, id)
+	return store.Transaction(ctx, id)
 }
 
 func (store *Store) Resolve(ctx context.Context, id string, state State) (Transaction, bool, error) {
@@ -173,7 +171,7 @@ func (store *Store) Resolve(ctx context.Context, id string, state State) (Transa
 		return Transaction{}, false, ErrStale
 	}
 	if pending == nil {
-		existing, err := store.byID(ctx, id)
+		existing, err := store.Transaction(ctx, id)
 		if errors.Is(err, ErrNotFound) {
 			return Transaction{}, false, err
 		}
@@ -193,11 +191,12 @@ func (store *Store) Resolve(ctx context.Context, id string, state State) (Transa
 	if rows != 1 {
 		return Transaction{}, false, ErrStale
 	}
-	resolved, err := store.byID(ctx, id)
+	resolved, err := store.Transaction(ctx, id)
 	return resolved, true, err
 }
 
-func (store *Store) byID(ctx context.Context, id string) (Transaction, error) {
+// Transaction reads immutable operation identity, including completed operations.
+func (store *Store) Transaction(ctx context.Context, id string) (Transaction, error) {
 	transaction, err := scan(store.db.QueryRowContext(ctx, `SELECT transaction_id,template_id,backup_id,candidate_hash,deadline_ns,phase,state,generation FROM safe_apply_transaction WHERE transaction_id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Transaction{}, ErrNotFound
@@ -230,7 +229,7 @@ func (store *Store) awaitReboot(ctx context.Context, id, bootID string) (Transac
 	if err = tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
-	return store.byID(ctx, id)
+	return store.Transaction(ctx, id)
 }
 
 func (store *Store) rebootBootID(ctx context.Context, id string) (string, error) {
@@ -266,7 +265,7 @@ func (store *Store) requireRestore(ctx context.Context, id string) (Transaction,
 	if err = tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
-	return store.byID(ctx, id)
+	return store.Transaction(ctx, id)
 }
 
 type scanner interface{ Scan(...any) error }

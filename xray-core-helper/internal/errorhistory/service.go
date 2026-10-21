@@ -7,7 +7,7 @@ import (
 	"errors"
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/logreader"
-	_ "modernc.org/sqlite"
+	"home-router/xray-core-helper/internal/sqliteopen"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,14 +39,12 @@ func Open(ctx context.Context, path string, reader Reader) (*Service, error) {
 	if !filepath.IsAbs(path) || reader == nil {
 		return nil, ErrUnavailable
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqliteopen.Open(ctx, path, sqliteopen.Options{BusyTimeout: 5 * time.Second})
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	db.SetMaxOpenConns(1)
 	s := &Service{db: db, reader: reader, now: time.Now}
-	_, err = db.ExecContext(ctx, `PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS xray_error_seen (seq INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE);
+	_, err = db.ExecContext(ctx, ` CREATE TABLE IF NOT EXISTS xray_error_seen (seq INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE);
  CREATE TABLE IF NOT EXISTS xray_error_history (id INTEGER PRIMARY KEY, event_time TEXT NOT NULL, observed_at TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS xray_error_collection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), collected_at TEXT NOT NULL, error_code TEXT NOT NULL, truncated INTEGER NOT NULL, source TEXT NOT NULL);
  INSERT OR IGNORE INTO xray_error_collection VALUES(1,'','',0,'');`)

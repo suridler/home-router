@@ -306,3 +306,13 @@ type ProxyDomainMutationResponse struct {
 type ApplyProxyDomainsResponse struct {
 	Applied bool `json:"applied"`
 }
+
+// XrayOverviewResponse is a set of redacted projections of one JSONC document.
+// Status remains available when the config cannot be read or parsed.
+type XrayOverviewResponse struct {
+	Status    StatusResponse    `json:"status"`
+	Inbounds  InboundsResponse  `json:"inbounds"`
+	Outbounds OutboundsResponse `json:"outbounds"`
+	Routing   RoutingResponse   `json:"routing"`
+	Logging   LoggingResponse   `json:"logging"`
+}

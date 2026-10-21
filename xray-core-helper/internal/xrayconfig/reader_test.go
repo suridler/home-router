@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"home-router/xray-core-helper/internal/api"
 )
 
 func TestJSONCProjectionsPreserveOrderAndRedactSecrets(t *testing.T) {
@@ -148,4 +150,48 @@ type fixedMetadataSource struct {
 
 func (source fixedMetadataSource) ConfigMetadata(context.Context) (uint64, string, error) {
 	return source.generation, source.contentHash, nil
+}
+
+type changingMetadataSource func(context.Context) (uint64, string, error)
+
+func (source changingMetadataSource) ConfigMetadata(ctx context.Context) (uint64, string, error) {
+	return source(ctx)
+}
+
+func TestOverviewUsesOneDocumentAndReadsFreshOnNextCall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := []byte(`{"inbounds":[{"tag":"tproxy-in","port":52345}],"outbounds":[{"tag":"first","protocol":"vless","settings":{"password":"fixture-secret"}}],"routing":{"rules":[]},"log":{"loglevel":"warning"}}`)
+	changed := []byte(`{"outbounds":[{"tag":"second","protocol":"freedom"}],"log":{"loglevel":"error"}}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reads := uint64(0)
+	reader := NewReader(Settings{Config: path}, changingMetadataSource(func(context.Context) (uint64, string, error) {
+		reads++
+		// Replace the config after parsing, while metadata is read. Every projection
+		// in this response must still describe the first document.
+		if reads == 1 {
+			if err := os.WriteFile(path, changed, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return reads, "", nil
+	}))
+	first := reader.Overview(context.Background())
+	if reads != 1 || first.Status.Generation != 1 || first.Outbounds.Outbounds[0].Tag != "first" || first.Logging.Loglevel != "warning" {
+		t.Fatalf("inconsistent overview: reads=%d, status=%+v, outbounds=%+v", reads, first.Status, first.Outbounds)
+	}
+	for _, metadata := range []api.ConfigMetadata{first.Inbounds.ConfigMetadata, first.Outbounds.ConfigMetadata, first.Routing.ConfigMetadata, first.Logging.ConfigMetadata} {
+		if metadata != first.Status.ConfigMetadata {
+			t.Fatalf("mixed metadata: %+v != %+v", metadata, first.Status.ConfigMetadata)
+		}
+	}
+	encoded, err := json.Marshal(first)
+	if err != nil || strings.Contains(string(encoded), "fixture-secret") {
+		t.Fatal("overview leaked config settings")
+	}
+	second := reader.Overview(context.Background())
+	if reads != 2 || second.Status.Generation != 2 || second.Outbounds.Outbounds[0].Tag != "second" || second.Logging.Loglevel != "error" || second.Status.ContentHash == first.Status.ContentHash {
+		t.Fatal("overview retained the old document")
+	}
 }

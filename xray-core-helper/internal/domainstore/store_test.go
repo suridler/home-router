@@ -485,23 +485,11 @@ func TestOpenAcceptsExistingHelperTransactionTables(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUnknownAndLegacySchemas(t *testing.T) {
+func TestOpenRejectsMalformedOwnedSchemas(t *testing.T) {
 	tests := []struct {
 		name       string
 		statements []string
 	}{
-		{
-			name:       "unknown table",
-			statements: []string{"CREATE TABLE unrelated (value TEXT)"},
-		},
-		{
-			name: "legacy domains schema",
-			statements: []string{`CREATE TABLE domains (
-				domain TEXT PRIMARY KEY,
-				desired INTEGER NOT NULL,
-				baseline INTEGER NOT NULL
-			)`},
-		},
 		{
 			name:       "incomplete proxy-domain schema",
 			statements: []string{"CREATE TABLE proxy_domain_state (domain TEXT PRIMARY KEY)"},

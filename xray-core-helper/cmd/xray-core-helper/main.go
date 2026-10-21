@@ -591,7 +591,7 @@ func requestJSONWithHeaders(client *http.Client, method, path string, requestBod
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return apiErrorFromResponse(response.StatusCode, payload)
 	}
-	if err := decodeStrictJSON(payload, responseBody); err != nil {
+	if err := decodeResponseJSON(payload, responseBody); err != nil {
 		return errInvalidAPIResponse
 	}
 	return nil
@@ -602,7 +602,7 @@ func apiErrorFromResponse(status int, payload []byte) error {
 		api.ErrorResponse
 		Operation json.RawMessage `json:"operation,omitempty"`
 	}
-	if err := decodeStrictJSON(payload, &response); err != nil {
+	if err := decodeResponseJSON(payload, &response); err != nil {
 		return &requestAPIError{status: status, code: "api_error"}
 	}
 	code := response.Error.Code
@@ -612,9 +612,8 @@ func apiErrorFromResponse(status int, payload []byte) error {
 	return &requestAPIError{status: status, code: code, maxAssetSizeMB: response.Error.MaxAssetSizeMB}
 }
 
-func decodeStrictJSON(payload []byte, target any) error {
+func decodeResponseJSON(payload []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}

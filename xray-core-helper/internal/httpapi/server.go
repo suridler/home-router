@@ -122,6 +122,7 @@ func NewServer(version string, reader xrayconfig.Reader, adopter ConfigService, 
 			writeJSON(w, status, result)
 		},
 	}))
+	mux.HandleFunc("/v1/xray/overview", getProjection(func(ctx context.Context) (api.XrayOverviewResponse, error) { return reader.Overview(ctx), nil }))
 	mux.HandleFunc("/v1/xray/runtime", getProjection(func(context.Context) (api.RuntimeResponse, error) { return reader.Runtime(), nil }))
 	mux.HandleFunc("/v1/xray/exporter-metadata", getProjection(reader.ExporterMetadata))
 	mux.HandleFunc("/v1/xray/status", getProjection(func(ctx context.Context) (api.StatusResponse, error) { return reader.Status(ctx), nil }))
@@ -139,18 +140,15 @@ func NewServer(version string, reader xrayconfig.Reader, adopter ConfigService, 
 			writeJSON(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: api.ErrorDetail{Code: "transaction_unavailable", Message: "configuration transaction service is unavailable"}})
 			return
 		}
-		var request api.AdoptConfigRequest
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil || request.ExpectedGeneration == nil {
-			writeJSON(w, http.StatusBadRequest, api.ErrorResponse{Error: api.ErrorDetail{Code: "invalid_request", Message: "expectedGeneration is required"}})
+		request, ok := decodeBody[api.AdoptConfigRequest](w, r)
+		if !ok {
 			return
 		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			writeJSON(w, http.StatusBadRequest, api.ErrorResponse{Error: api.ErrorDetail{Code: "invalid_request", Message: "request body must contain one JSON object"}})
+		if request.ExpectedGeneration == nil {
+			writeAPIError(w, 400, "invalid_request", "expectedGeneration is required")
 			return
 		}
+
 		metadata, adopted, err := adopter.Adopt(r.Context(), *request.ExpectedGeneration)
 		if err != nil {
 			if errors.Is(err, coordinator.ErrRecoveryBlocked) {

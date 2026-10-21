@@ -37,6 +37,10 @@ function helperPayload(pathname) {
     '/v1/errors': { errors: [{ id: 9, time: '2026-10-18T12:00:00Z', source: 'journal', message: '[Error] retained' }], capacity: 100, collectedAt: '2026-10-18T12:00:01Z' },
     '/v1/logs/error': { kind: 'error', source: 'journal', lines: ['sanitized helper line'], bytesRead: 21, byteLimit: 1048576, lineLimit: 3, truncated: false }
   };
+  if (path === '/v1/xray/overview') return {
+    status: { ...responses['/v1/xray/status'], runtime: responses['/v1/xray/runtime'] },
+    ...Object.fromEntries(['inbounds', 'outbounds', 'routing', 'logging'].map(key => [key, responses[`/v1/xray/${key}`]]))
+  };
   return responses[path];
 }
 
@@ -87,8 +91,9 @@ test('read-only web APIs use the fake helper when host config paths are unreadab
   const geodata = await geodataResponse.json();
   assert.equal(geodata.files.length, 2);
   assert.equal(geodata.files[0].exists, true);
-  assert.ok(calls.includes('/v1/xray/status'));
-  assert.ok(calls.includes('/v1/xray/routing'));
+  assert.ok(calls.includes('/v1/xray/overview'));
+  assert.equal(calls.includes('/v1/xray/status'), false);
+  assert.equal(calls.includes('/v1/xray/routing'), false);
   assert.ok(calls.includes('/v1/logs/error?limit=200'));
   assert.ok(calls.includes('/v1/xray/geodata/update/status'));
   assert.equal(calls.includes('/v1/xray/geodata/settings'), false);
@@ -118,7 +123,7 @@ test('a freedom outbound named proxy is reported as an initial direct placeholde
   const { createHelperReadService } = require('../../services/helper-read-service');
   const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}),
     helperClient: { async request(method, path) {
-      if (path === '/v1/xray/outbounds') return { outbounds: [{ tag: 'proxy', protocol: 'freedom' }, { tag: 'direct', protocol: 'freedom' }] };
+      if (path === '/v1/xray/overview') return { ...helperPayload(path), outbounds: { outbounds: [{ tag: 'proxy', protocol: 'freedom' }, { tag: 'direct', protocol: 'freedom' }] } };
       return helperPayload(path);
     } }
   });
@@ -197,4 +202,50 @@ test('running geodata status exposes the durable process stage', async () => {
   const result = await service.getGeodataStatus();
   assert.equal(result.progressLabel, 'Пользовательские базы · Сборка');
   assert.equal(result.health.label, result.progressLabel);
+});
+
+test('network config reads only setup and diagnostics and preserves the status projection', async () => {
+  const { createHelperReadService } = require('../../services/helper-read-service');
+  const calls = [];
+  const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}),
+    helperClient: { async request(_, path) {
+      calls.push(path);
+      if (path === '/v1/setup') return { operation: { networkInterface: 'lan7', lanNetwork: '10.7.0.0/24' } };
+      return helperPayload(path);
+    } }
+  });
+  const config = await service.getRouterConfig();
+  assert.deepEqual(calls.sort(), ['/v1/setup', '/v1/xray/diagnostics']);
+  assert.deepEqual(config, (await service.getRouterStatus()).config);
+});
+
+test('overlapping status reads share requests but the next poll reads fresh state', async () => {
+  const { createHelperReadService } = require('../../services/helper-read-service');
+  const calls = [];
+  let complete;
+  let gate = new Promise(resolve => { complete = resolve; });
+  const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}),
+    helperClient: { async request(_, path) { calls.push(path); await gate; return helperPayload(path) || {}; } }
+  });
+  const first = service.getRouterStatus();
+  const second = service.getRouterStatus();
+  const geodata = service.getGeodataStatus();
+  complete();
+  await Promise.all([first, second, geodata]);
+  assert.equal(calls.length, 8);
+  assert.equal(calls.filter(path => path === '/v1/xray/geodata').length, 1);
+  gate = Promise.resolve();
+  await service.getRouterStatus();
+  assert.equal(calls.length, 16);
+});
+
+test('a failed shared geodata read is retried by the next poll', async () => {
+  const { createHelperReadService } = require('../../services/helper-read-service');
+  let unavailable = true;
+  const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}),
+    helperClient: { async request(_, path) { if (unavailable) throw Error('offline'); return helperPayload(path); } }
+  });
+  await assert.rejects(service.getGeodataStatus(), /offline/);
+  unavailable = false;
+  assert.equal((await service.getGeodataStatus()).health.state, 'ok');
 });

@@ -21,7 +21,7 @@ type ApplyTemplateService interface {
 }
 
 func applyTemplate(w http.ResponseWriter, r *http.Request, service ApplyTemplateService, id templatecatalog.ID) {
-	request, ok := decodeUniqueBody[api.ApplyTemplateRequest](w, r)
+	request, ok := decodeBody[api.ApplyTemplateRequest](w, r)
 	if !ok {
 		return
 	}

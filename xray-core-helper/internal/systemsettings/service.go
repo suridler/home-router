@@ -13,6 +13,8 @@ import (
 
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
+
+	"home-router/xray-core-helper/internal/atomicfile"
 )
 
 var ErrInvalidSettings = errors.New("invalid system settings")
@@ -94,50 +96,14 @@ func replace(path string, contents []byte) error {
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".config.toml-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(name)
+	_, err = atomicfile.Write(path, contents, func(f *os.File) error {
+		if err := f.Chmod(info.Mode().Perm()); err != nil {
+			return err
 		}
-	}()
-	if err = temporary.Chmod(info.Mode().Perm()); err == nil {
 		if stat, valid := info.Sys().(*syscall.Stat_t); valid {
-			err = temporary.Chown(int(stat.Uid), int(stat.Gid))
+			return f.Chown(int(stat.Uid), int(stat.Gid))
 		}
-	}
-	if err == nil {
-		_, err = temporary.Write(contents)
-	}
-	if err == nil {
-		err = temporary.Sync()
-	}
-	closeErr := temporary.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(name, path); err != nil {
-		return err
-	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	err = directory.Sync()
-	closeErr = directory.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	ok = true
-	return nil
+		return nil
+	})
+	return err
 }

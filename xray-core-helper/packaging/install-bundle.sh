@@ -15,10 +15,9 @@ if ((standalone_prebuilt)); then
  exec "$helper_root/bin/xray-core-helper" install --bundle "$helper_root/.." "${standalone_arguments[@]}"
 fi
 
-web_mode=${XRAY_HELPER_WEB_ENABLED:-}; web_port=3000; explicit_port=0; prebuilt=0
+web_mode=${XRAY_HELPER_WEB_ENABLED:-}; web_port=3000; explicit_port=0
 while (($#)); do
   case "$1" in
-    --prebuilt) prebuilt=1; shift;;
     --web-port)
       (($# >= 2)) || { echo "missing option value" >&2; exit 2; }
       web_port=$2; explicit_port=1
@@ -50,18 +49,10 @@ if [[ $web_mode == 1 ]]; then
 fi
 build_dir=$(mktemp -d /tmp/xray-core-helper-bundle.XXXXXX)
 trap 'rm -rf -- "$build_dir"' EXIT
-if ((prebuilt)); then
-  python3 "$helper_root/packaging/verify-release.py" "$helper_root/.."
-  cp -- "$helper_root/bin/xray-core-helperd" "$build_dir/xray-core-helperd"
-  cp -- "$helper_root/bin/xray-core-helper" "$build_dir/xray-core-helper"
-  cp -- "$helper_root/bin/domain-list-community" "$build_dir/domain-list-community"
-  cp -- "$helper_root/licenses/domain-list-community.txt" "$build_dir/domain-list-community.LICENSE"
-else
   command -v go >/dev/null || { echo 'preflight_binary_unavailable: go' >&2; exit 1; }
   go -C "$helper_root" build -o "$build_dir/xray-core-helperd" ./cmd/xray-core-helperd
   go -C "$helper_root" build -o "$build_dir/xray-core-helper" ./cmd/xray-core-helper
   python3 "$helper_root/packaging/dlc_builder.py" "$build_dir/domain-list-community" "$build_dir/domain-list-community.LICENSE"
-fi
 # Discovery and config parsing must finish before installed files/services change.
 "$build_dir/xray-core-helper" discover-xray > "$build_dir/discovery.json"
 config_input=/etc/xray-core-helper/config.toml

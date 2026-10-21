@@ -34,7 +34,9 @@ Xray
 The exporter includes a bounded read-only Unix-socket client for
 `GET /v1/xray/exporter-metadata`. It strictly parses the helper's Xray API
 address, inbound/outbound tags, generation and content hash without logging
-response bodies. A standalone metadata manager atomically persists the last
+response bodies. Additional response fields are accepted so compatible helper
+updates do not require an exporter update. Known fields remain validated and
+malformed or trailing JSON is rejected. A standalone metadata manager atomically persists the last
 valid snapshot with mode `0600`, retains it as stale during helper outages,
 refreshes it on a bounded interval, and applies deterministic capped backoff
 after failures. StatsService polling uses the metadata address directly and

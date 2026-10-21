@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const { createApp } = require('../../app');
 const { createBackend } = require('../../services/backend');
 const { createHelperClient, LONG_OPERATION_TIMEOUT_MS, MAX_REQUEST_TIMEOUT_MS } = require('../../services/helper-client');
-const { createHelperUpdateService, createHelperUpdatesService } = require('../../services/helper-updates');
+const { createHelperUpdateService } = require('../../services/helper-updates');
 const { startFakeHelper, writeJSON } = require('../helpers/fake-helper');
 
 const OP = '0123456789abcdef0123456789abcdef';
@@ -49,7 +49,6 @@ test('typed update client uses only fixed helper lifecycle endpoints', async () 
     }
   };
   const service = createHelperUpdateService({ helperClient: client });
-  assert.equal(createHelperUpdatesService, createHelperUpdateService);
 
   assert.equal((await service.getUpdateStatus()).currentVersion, 'helper-v0.1.0');
   await service.checkUpdate();

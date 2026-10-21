@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"home-router/xray-core-helper/internal/coordinator"
+	"home-router/xray-core-helper/internal/jsonrequest"
 )
 
 type Request struct {
@@ -42,15 +42,8 @@ func (e *Engine) Wrap(next http.Handler) http.Handler {
 				return
 			}
 			var input Request
-			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
-			d.DisallowUnknownFields()
-			if err := d.Decode(&input); err != nil {
-				respondError(w, 400, "invalid_request", "one update request object required")
-				return
-			}
-			var extra any
-			if d.Decode(&extra) != io.EOF {
-				respondError(w, 400, "invalid_request", "trailing request content")
+			if err := jsonrequest.Decode(http.MaxBytesReader(w, r.Body, 4096), &input); err != nil {
+				respondError(w, 400, "invalid_request", "one valid update request object required")
 				return
 			}
 			if r.URL.Path == "/v1/update/check" {

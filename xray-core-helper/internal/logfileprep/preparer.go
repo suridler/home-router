@@ -236,20 +236,8 @@ func (preparer *Preparer) Prepare(ctx context.Context, request api.LogConfigurat
 		if err != nil {
 			return fail(err)
 		}
-		if err := entry.file.Chown(identity.UID, identity.GID); err != nil {
-			return fail(ErrPreparation)
-		}
-		if err := entry.file.Chmod(fileMode); err != nil {
-			return fail(ErrPreparation)
-		}
-		if !sameFile(logDirectory, entry.name, entry.info) {
-			return fail(ErrUnsafeFilesystem)
-		}
-		if !fileMetadataMatches(entry.file, identity, fileMode) {
-			return fail(ErrPreparation)
-		}
-		if err := entry.file.Sync(); err != nil {
-			return fail(ErrPreparation)
+		if err := entry.prepare(logDirectory, identity); err != nil {
+			return fail(err)
 		}
 	}
 	if err := logDirectory.Sync(); err != nil {
@@ -335,6 +323,27 @@ func prepareFile(directory Directory, name string) (*preparedFile, error) {
 		entry.previousValid = true
 	}
 	return entry, nil
+}
+
+// prepare applies the same file policy for standard and configured destinations.
+// Parent traversal and directory metadata remain with their respective owners.
+func (entry *preparedFile) prepare(directory Directory, identity Identity) error {
+	if err := entry.file.Chown(identity.UID, identity.GID); err != nil {
+		return ErrPreparation
+	}
+	if err := entry.file.Chmod(fileMode); err != nil {
+		return ErrPreparation
+	}
+	if !sameFile(directory, entry.name, entry.info) {
+		return ErrUnsafeFilesystem
+	}
+	if !fileMetadataMatches(entry.file, identity, fileMode) {
+		return ErrPreparation
+	}
+	if err := entry.file.Sync(); err != nil {
+		return ErrPreparation
+	}
+	return nil
 }
 
 func (state *preparation) Rollback() error {
