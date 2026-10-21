@@ -21,9 +21,10 @@ var (
 // in memory only: after a helper restart one replay is safe because the typed
 // routing payload replaces the managed runtime rule group.
 type RuntimeReconciler struct {
-	service   *Service
-	identity  func(context.Context) (string, error)
-	lastToken string
+	service     *Service
+	identity    func(context.Context) (string, error)
+	lastToken   string
+	BeforeApply func(context.Context, string) error
 }
 
 // NewRuntimeReconciler creates a runtime reconciler. Reconcile calls are
@@ -65,6 +66,12 @@ func (reconciler *RuntimeReconciler) Reconcile(ctx context.Context) (bool, error
 	}
 	if token == reconciler.lastToken {
 		return false, nil
+	}
+
+	if reconciler.BeforeApply != nil {
+		if err := reconciler.BeforeApply(ctx, token); err != nil {
+			return false, err
+		}
 	}
 
 	if err := reconciler.service.ApplyWhileLocked(ctx); err != nil {

@@ -101,7 +101,7 @@ func TestSocketGroupNameIsRestricted(t *testing.T) {
 	}
 }
 
-func TestGeodataDefaultsAreDisabledAndRequireSHA256(t *testing.T) {
+func TestGeodataDefaultsProvideSourcesAndRequireSHA256(t *testing.T) {
 	config := Defaults()
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Defaults().Validate() error = %v", err)
@@ -109,16 +109,15 @@ func TestGeodataDefaultsAreDisabledAndRequireSHA256(t *testing.T) {
 	if config.Geodata.Builder != "/usr/local/bin/domain-list-community" {
 		t.Fatalf("geodata builder default = %q", config.Geodata.Builder)
 	}
-	if len(config.Geodata.Origins) != 0 ||
-		config.Geodata.Geosite.URL != "" ||
-		config.Geodata.Geoip.URL != "" {
-		t.Fatalf("geodata defaults must not enable remote sources: %#v", config.Geodata)
+	if len(config.Geodata.Origins) != 1 || !config.Geodata.AllowsRemoteURL(config.Geodata.Geosite.URL) || !config.Geodata.AllowsRemoteURL(config.Geodata.Geoip.URL) {
+		t.Fatal("defaults must provide allowed remote sources")
 	}
+
 	for name, source := range map[string]GeodataSourceConfig{
 		"geosite": config.Geodata.Geosite,
 		"geoip":   config.Geodata.Geoip,
 	} {
-		if source.Checksum.Algorithm != "sha256" || source.Checksum.URL != "" {
+		if source.Checksum.Algorithm != "sha256" || source.Checksum.URL == "" {
 			t.Errorf("%s checksum defaults = %#v; want mandatory sha256 policy and no source", name, source.Checksum)
 		}
 	}
@@ -315,12 +314,6 @@ func TestGeodataRequiresChecksumMetadataForBothAssets(t *testing.T) {
 			name: "unsupported geoip checksum algorithm",
 			change: func(config *GeodataConfig) {
 				config.Geoip.Checksum.Algorithm = ""
-			},
-		},
-		{
-			name: "source origin missing",
-			change: func(config *GeodataConfig) {
-				config.Origins = nil
 			},
 		},
 		{

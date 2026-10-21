@@ -124,10 +124,14 @@ function createHelperAdminService({ helperClient }) {
 
   async function saveGeodataSettings(input) {
     const urls = [input.geositeUrl, input.geositeSha256Url, input.geoipUrl, input.geoipSha256Url];
-    const origins = [...new Set(urls.filter(Boolean).map(value => new URL(value).origin))];
+    const origins = typeof input.originsText === 'string' ? input.originsText.split(/\s+/).filter(Boolean) : [...new Set(urls.filter(Boolean).map(value => new URL(value).origin))];
     const payload = {
       expectedGeneration: input.expectedGeneration,
       settings: {
+        ...(input.maxAssetSizeMB !== undefined ? { maxAssetSizeMB: Number(input.maxAssetSizeMB) } : {}),
+        ...(input.userGeosite !== undefined ? { userGeosite: input.userGeosite } : {}),
+        ...(input.userGeoip !== undefined ? { userGeoip: input.userGeoip } : {}),
+        ...(input.enabled !== undefined ? { schedule: { enabled: input.enabled === true, time: input.time } } : {}),
         origins,
         geosite: { url: input.geositeUrl, checksum: { url: input.geositeSha256Url, algorithm: 'sha256' } },
         geoip: { url: input.geoipUrl, checksum: { url: input.geoipSha256Url, algorithm: 'sha256' } }

@@ -57,3 +57,15 @@ test('readiness and setup recovery failures always have a visible reason', () =>
   const input = facts();input.setup.recoveryRequired = true;
   assert.ok(gatewayStatus(input).issues.some(issue=>issue.key==='setup'));
 });
+
+test('a failed Xray activation is a gateway error separate from successful geodata files', () => {
+  const input = facts();
+  input.geodata = { health: { state: 'ok', label: 'Геобазы обновлены' }, activation: {
+    stage: 'restart', message: 'Базы заменены; перезапуск Xray завершился ошибкой'
+  } };
+  const result = gatewayStatus(input);
+  assert.equal(result.state, 'error');
+  assert.equal(result.components.find(c => c.key === 'geodata').state, 'ok');
+  assert.equal(result.components.find(c => c.key === 'xray').state, 'error');
+  assert.match(result.components.find(c => c.key === 'xray').label, /перезапуск Xray/);
+});

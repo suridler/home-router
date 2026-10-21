@@ -13,9 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
+	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/domainstore"
 	"home-router/xray-core-helper/internal/geodatarecovery"
+	"home-router/xray-core-helper/internal/systemsettings"
 )
 
 type recoveryFake struct {
@@ -45,7 +48,7 @@ func openFixture(t *testing.T, path string, initial bootstrap.GeodataConfig, rec
 		t.Fatal(err)
 	}
 	service, err := NewService(ServiceOptions{
-		Store: store, Recovery: recoveryFake{status: recovery},
+		Store: store, Settings: testTOML(t, path, initial), Recovery: recoveryFake{status: recovery},
 	})
 	if err != nil {
 		_ = store.Close()
@@ -66,6 +69,7 @@ func cleanRecovery() geodatarecovery.Status {
 
 func configuredSettings() Settings {
 	return Settings{
+		MaxAssetSizeMB: 256, Builder: "/private/path/to/builder", UserGeosite: bootstrap.DefaultUserGeositeName, UserGeoip: bootstrap.DefaultUserGeoipName, Schedule: &api.GeodataSchedule{Enabled: true, Time: "04:00"},
 		Origins: []string{"https://data.example"},
 		Geosite: SourceSettings{URL: "https://data.example/files/geosite.dat",
 			Checksum: ChecksumSettings{URL: "https://data.example/checksums/geosite.sha256", Algorithm: "sha256"}},
@@ -76,6 +80,7 @@ func configuredSettings() Settings {
 
 func bootstrapSettings(settings Settings) bootstrap.GeodataConfig {
 	return bootstrap.GeodataConfig{
+		MaxAssetSizeMB: 256, UserGeosite: bootstrap.DefaultUserGeositeName, UserGeoip: bootstrap.DefaultUserGeoipName,
 		Origins: settings.Origins,
 		Builder: "/private/path/to/builder",
 		Geosite: bootstrap.GeodataSourceConfig{
@@ -101,7 +106,7 @@ func TestOpenSeedsValidatedBootstrapOnceAndPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Generation != 0 || !reflect.DeepEqual(got.Settings, firstSettings) {
+	if !reflect.DeepEqual(got.Settings, firstSettings) {
 		t.Fatalf("initial Settings() = %#v; want generation 0 and bootstrap settings", got)
 	}
 	replacement := configuredSettings()
@@ -110,7 +115,7 @@ func TestOpenSeedsValidatedBootstrapOnceAndPersistsAcrossReopen(t *testing.T) {
 	replacement.Geosite.Checksum.URL = "https://new-data.example/custom/geosite.sha256"
 	replacement.Geoip.URL = "https://new-data.example/custom/geoip.dat"
 	replacement.Geoip.Checksum.URL = "https://new-data.example/custom/geoip.sha256"
-	if _, err := service.ReplaceSettings(context.Background(), 0, replacement); err != nil {
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), replacement); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -129,7 +134,7 @@ func TestOpenSeedsValidatedBootstrapOnceAndPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Generation != 1 || !reflect.DeepEqual(got.Settings, replacement) {
+	if !reflect.DeepEqual(got.Settings, replacement) {
 		t.Fatalf("reopened Settings() = %#v; persisted API settings were overwritten", got)
 	}
 }
@@ -141,22 +146,22 @@ func TestSettingsValidationAndGenerationConflict(t *testing.T) {
 
 	invalid := configuredSettings()
 	invalid.Origins = []string{"https://data.example", "https://DATA.example:443"}
-	if _, err := service.ReplaceSettings(context.Background(), 0, invalid); !errors.Is(err, ErrInvalidSettings) {
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), invalid); !errors.Is(err, ErrInvalidSettings) {
 		t.Fatalf("duplicate-origin replacement error = %v; want invalid settings", err)
 	}
 	invalid = configuredSettings()
 	invalid.Geoip.Checksum.URL = ""
-	if _, err := service.ReplaceSettings(context.Background(), 0, invalid); !errors.Is(err, ErrInvalidSettings) {
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), invalid); !errors.Is(err, ErrInvalidSettings) {
 		t.Fatalf("incomplete-source replacement error = %v; want invalid settings", err)
 	}
 	if _, err := service.ReplaceSettings(context.Background(), 1, configuredSettings()); !errors.Is(err, ErrGenerationConflict) {
 		t.Fatalf("stale replacement error = %v; want generation conflict", err)
 	}
-	updated, err := service.ReplaceSettings(context.Background(), 0, configuredSettings())
+	updated, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), configuredSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Generation != 1 {
+	if updated.Generation != currentGeneration(t, service) {
 		t.Fatalf("replacement generation = %d; want 1", updated.Generation)
 	}
 }
@@ -182,7 +187,9 @@ func TestBeginUpdateValidatesKeysReplaysAndRejectsPayloadConflict(t *testing.T) 
 	if _, _, err := service.BeginUpdate(context.Background(), "request-2"); !errors.Is(err, ErrOperationInProgress) {
 		t.Fatalf("parallel key error = %v; want in-progress conflict", err)
 	}
-	if _, err := service.ReplaceSettings(context.Background(), 0, configuredSettings()); err != nil {
+	changed := configuredSettings()
+	changed.MaxAssetSizeMB = 512
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), changed); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := service.BeginUpdate(context.Background(), "request-1"); !errors.Is(err, ErrIdempotencyConflict) {
@@ -255,7 +262,7 @@ func TestRecoveryBlocksNewOperationButStatusRemainsRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"secret", "/private/path", "raw-error", "request_fingerprint", "idempotency_key"} {
+	for _, secret := range []string{"secret", "raw-error", "request_fingerprint", "idempotency_key"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("status contains %q: %s", secret, encoded)
 		}
@@ -281,7 +288,7 @@ func TestStatusReadsLiveRecoveryProvider(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	recovery := &mutableRecoveryFake{status: cleanRecovery()}
-	service, err := NewService(ServiceOptions{Store: store, Recovery: recovery})
+	service, err := NewService(ServiceOptions{Store: store, Settings: testTOML(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings())), Recovery: recovery})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,41 +389,38 @@ func TestInvalidFinishCodeAndCancellationDoNotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Settings.Generation != 0 || status.Operation.State != OperationRunning {
+	if !reflect.DeepEqual(status.Settings.Settings, configuredSettings()) || status.Operation.State != OperationRunning {
 		t.Fatalf("canceled/invalid operation changed persisted state: %#v", status)
 	}
 }
 
-func TestSettingsReplacementRollsBackWhenOriginWriteFails(t *testing.T) {
-	store, service := openFixture(t, filepath.Join(t.TempDir(), "helper.sqlite"),
-		bootstrapSettings(configuredSettings()), cleanRecovery())
-	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.db.Exec(`CREATE TRIGGER reject_geodata_origin
-		BEFORE INSERT ON geodata_admin_origin BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	replacement := configuredSettings()
-	replacement.Origins = []string{"https://other.example"}
-	replacement.Geosite.URL = "https://other.example/geosite.dat"
-	replacement.Geosite.Checksum.URL = "https://other.example/geosite.sha256"
-	replacement.Geoip.URL = "https://other.example/geoip.dat"
-	replacement.Geoip.Checksum.URL = "https://other.example/geoip.sha256"
-	if _, err := service.ReplaceSettings(context.Background(), 0, replacement); err == nil {
-		t.Fatal("replacement succeeded despite injected origin-write failure")
-	}
-	if _, err := store.db.Exec("DROP TRIGGER reject_geodata_origin"); err != nil {
-		t.Fatal(err)
-	}
-	got, err := service.Settings(context.Background())
+func TestSettingsReplacementRejectsConcurrentManualEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "helper.sqlite")
+	store, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
+	defer store.Close()
+	before := currentGeneration(t, service)
+	cfg, err := bootstrap.Load(filepath.Join(filepath.Dir(path), "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Generation != 0 || !reflect.DeepEqual(got.Settings, configuredSettings()) {
-		t.Fatalf("failed replacement was not rolled back: %#v", got)
+	cfg.Geodata.MaxAssetSizeMB = 512
+	raw, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "config.toml"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReplaceSettings(context.Background(), before, configuredSettings()); !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("stale save=%v", err)
+	}
+	current, err := service.Settings(context.Background())
+	if err != nil || current.Settings.MaxAssetSizeMB != 512 {
+		t.Fatal("manual edit lost", err)
 	}
 }
 
-func TestSettingsAndStatusAreTypedRedactedAndDoNotExposeBuilder(t *testing.T) {
+func TestSettingsAndStatusExposeSettingsButNotSecrets(t *testing.T) {
 	config := bootstrapSettings(configuredSettings())
 	config.Builder = "/secret/builder/path"
 	store, service := openFixture(t, filepath.Join(t.TempDir(), "helper.sqlite"), config, cleanRecovery())
@@ -429,7 +433,7 @@ func TestSettingsAndStatusAreTypedRedactedAndDoNotExposeBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"/secret/builder/path", "fingerprint", "checksum contents", "contentHash", "raw error"} {
+	for _, forbidden := range []string{"fingerprint", "checksum contents", "contentHash", "raw error"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("status contains forbidden %q: %s", forbidden, encoded)
 		}
@@ -458,7 +462,7 @@ func TestSQLiteSchemaCoexistsWithDomainStoreAuditAndReopens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Generation != 0 || !reflect.DeepEqual(got.Settings, configuredSettings()) {
+	if !reflect.DeepEqual(got.Settings, configuredSettings()) {
 		t.Fatalf("settings changed across SQLite reopen/audit: %#v", got)
 	}
 }
@@ -529,7 +533,7 @@ func TestSQLTablesContainStrictTypedColumnsWithoutJSONBlob(t *testing.T) {
 	store, _ := openFixture(t, filepath.Join(t.TempDir(), "helper.sqlite"),
 		bootstrapSettings(configuredSettings()), cleanRecovery())
 	t.Cleanup(func() { _ = store.Close() })
-	for _, table := range []string{settingsTable, originsTable, operationTable} {
+	for _, table := range []string{operationTable} {
 		var schema string
 		if err := store.db.QueryRow("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&schema); err != nil {
 			t.Fatal(err)
@@ -564,17 +568,14 @@ func TestOperationRecordDoesNotReturnIdempotencyKeyOrFingerprint(t *testing.T) {
 	}
 }
 
-func TestSettingsReplaceUsesMonotonicGenerationEvenForIdenticalValues(t *testing.T) {
-	store, service := openFixture(t, filepath.Join(t.TempDir(), "helper.sqlite"),
-		bootstrapSettings(configuredSettings()), cleanRecovery())
-	t.Cleanup(func() { _ = store.Close() })
-	for expected, want := range []uint64{1, 2} {
-		result, err := service.ReplaceSettings(context.Background(), uint64(expected), configuredSettings())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Generation != want {
-			t.Fatalf("replacement generation = %d; want %d", result.Generation, want)
+func TestSettingsGenerationIdentifiesEffectiveValues(t *testing.T) {
+	store, service := openFixture(t, filepath.Join(t.TempDir(), "helper.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
+	defer store.Close()
+	before := currentGeneration(t, service)
+	for i := 0; i < 2; i++ {
+		result, err := service.ReplaceSettings(context.Background(), before, configuredSettings())
+		if err != nil || result.Generation != before {
+			t.Fatalf("unchanged save=%+v %v", result, err)
 		}
 	}
 }
@@ -589,5 +590,65 @@ func TestCancelledStoreOpenDoesNotCreateDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("canceled Open() created database file: stat error=%v", err)
+	}
+}
+
+func currentGeneration(t *testing.T, s *Service) uint64 {
+	t.Helper()
+	settings, err := s.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settings.Generation
+}
+func testTOML(t *testing.T, path string, geo bootstrap.GeodataConfig) *systemsettings.Service {
+	t.Helper()
+	cfg := bootstrap.Defaults()
+	if geo.MaxAssetSizeMB == 0 {
+		geo.MaxAssetSizeMB = 256
+	}
+	if geo.UserGeosite == "" {
+		geo.UserGeosite = bootstrap.DefaultUserGeositeName
+	}
+	if geo.UserGeoip == "" {
+		geo.UserGeoip = bootstrap.DefaultUserGeoipName
+	}
+	cfg.Geodata = geo
+	name := filepath.Join(filepath.Dir(path), "config.toml")
+	if _, err := os.Stat(name); errors.Is(err, os.ErrNotExist) {
+		raw, err := toml.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disk, err := bootstrap.Load(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := systemsettings.New(name, disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settings
+}
+
+func TestBuilderPathCanOnlyChangeInTOML(t *testing.T) {
+	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
+	defer store.Close()
+	settings, err := service.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempted := settings.Settings
+	attempted.Builder = "/arbitrary/executable"
+	if _, err := service.ReplaceSettings(context.Background(), settings.Generation, attempted); !errors.Is(err, ErrInvalidSettings) {
+		t.Fatal("API changed executable", err)
+	}
+	after, err := service.Settings(context.Background())
+	if err != nil || after.Settings.Builder != settings.Settings.Builder {
+		t.Fatal("settings changed", err)
 	}
 }

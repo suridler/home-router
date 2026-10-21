@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/coordinator"
 	"home-router/xray-core-helper/internal/domainstore"
@@ -14,6 +15,7 @@ import (
 	"home-router/xray-core-helper/internal/geodatarecovery"
 	"home-router/xray-core-helper/internal/geodataupdate"
 	"home-router/xray-core-helper/internal/servicecontrol"
+	"home-router/xray-core-helper/internal/systemsettings"
 )
 
 type daemonRecoveryFake struct{}
@@ -75,33 +77,13 @@ func TestConfiguredDaemonBuildsProductionGeodataExecutor(t *testing.T) {
 	}
 }
 
-func TestDisabledDaemonExecutorIsUnavailable(t *testing.T) {
-	config, service, _ := daemonGeodataFixture(t, false)
-	executor, err := newGeodataExecutor(config, service, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("newGeodataExecutor() for intentionally disabled geodata: %v", err)
+func TestCustomCycleRemainsAvailableWithoutExternalSources(t *testing.T) {
+	config, service, domains := daemonGeodataFixture(t, false)
+	if _, err := newGeodataExecutor(config, service, domains, daemonOverlayFake{}, &daemonServiceControlFake{}, nil); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := executor.Execute(context.Background(), "disabled-update"); !daemonExecutionError(err, "geodata_update_unavailable", 503) {
-		t.Fatalf("disabled Execute() error = %v; want geodata_update_unavailable", err)
-	}
-}
-
-func TestConfiguredDaemonFailsClosedOnMissingUpdateDependencies(t *testing.T) {
-	config, service, domains := daemonGeodataFixture(t, true)
-	for _, test := range []struct {
-		name          string
-		services      geodataupdate.ServiceController
-		routingHealth geodataupdate.RoutingHealth
-	}{
-		{name: "service controller", routingHealth: &daemonRoutingHealthFake{}},
-		{name: "Xray API health", services: &daemonServiceControlFake{}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if executor, err := newGeodataExecutor(config, service, domains,
-				daemonOverlayFake{}, test.services, test.routingHealth); err == nil || executor != nil {
-				t.Fatalf("newGeodataExecutor() = %v, %v; want startup dependency error and no executor", executor, err)
-			}
-		})
+	if _, err := newGeodataExecutor(config, service, domains, daemonOverlayFake{}, nil, nil); err == nil {
+		t.Fatal("missing service controller accepted")
 	}
 }
 
@@ -190,7 +172,7 @@ func daemonGeodataFixture(t *testing.T, enabled bool) (bootstrap.Config, *geodat
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	service, err := geodataadmin.NewService(geodataadmin.ServiceOptions{
-		Store: store, Recovery: daemonRecoveryFake{},
+		Store: store, Settings: daemonTOML(t, config), Recovery: daemonRecoveryFake{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -232,3 +214,20 @@ func resetDaemonCoordinator(t *testing.T) {
 var _ geodataupdate.RuntimeOverlay = daemonOverlayFake{}
 var _ geodataupdate.ServiceController = (*daemonServiceControlFake)(nil)
 var _ geodataupdate.RoutingHealth = (*daemonRoutingHealthFake)(nil)
+
+func daemonTOML(t *testing.T, cfg bootstrap.Config) *systemsettings.Service {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	raw, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := systemsettings.New(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settings
+}

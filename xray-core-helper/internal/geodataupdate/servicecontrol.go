@@ -41,3 +41,11 @@ func (verifier *RoutingServiceHealthVerifier) VerifyActive(ctx context.Context) 
 	}
 	return nil
 }
+
+type ServiceController interface {
+	Execute(context.Context, servicecontrol.Unit, servicecontrol.Action) (servicecontrol.Result, error)
+}
+type RoutingHealth interface {
+	ListRules(context.Context) ([]byte, error)
+}
+type RuntimeOverlay interface{ ApplyWhileLocked(context.Context) error }

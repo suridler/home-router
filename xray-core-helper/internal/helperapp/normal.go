@@ -11,7 +11,6 @@ import (
 	"home-router/xray-core-helper/internal/acceptsystem"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/candidatevalidation"
-	"home-router/xray-core-helper/internal/consolidation"
 	"home-router/xray-core-helper/internal/coordinator"
 	"home-router/xray-core-helper/internal/domainservice"
 	"home-router/xray-core-helper/internal/domainstore"
@@ -19,7 +18,6 @@ import (
 	"home-router/xray-core-helper/internal/geodataadmin"
 	"home-router/xray-core-helper/internal/geodatacontract"
 	"home-router/xray-core-helper/internal/geodatadownload"
-	"home-router/xray-core-helper/internal/geodatainstall"
 	"home-router/xray-core-helper/internal/geodatarecovery"
 	"home-router/xray-core-helper/internal/geodataupdate"
 	"home-router/xray-core-helper/internal/httpapi"
@@ -173,7 +171,6 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	config := a.config
 	config.Logging = settingsService.Logging()
 
-	coordinator.Block()
 	reader := xrayconfig.NewReader(xrayconfig.Settings{
 		Binary:   config.Xray.Binary,
 		Config:   config.Xray.Config,
@@ -185,40 +182,14 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 		return nil, err
 	}
 	cleanup.add(domainsStore.Close)
-	recoveryStatus := geodatarecovery.UnavailableStatus()
-	var recoveryProvider geodataadmin.RecoveryProvider = unavailableGeodataRecovery{}
-	standardInstaller, recoverySetupErr := geodatainstall.New(config.Xray.AssetDir, nil, config.Geodata.MaxAssetSizeMB)
-	if recoverySetupErr == nil {
-		var customRecovery *consolidation.Service
-		customRecovery, recoverySetupErr = consolidation.NewRecoveryService(domainsStore, config.Xray.AssetDir, config.Geodata.UserGeosite, config.Geodata.UserGeoip, nil, config.Geodata.MaxAssetSizeMB)
-		if recoverySetupErr == nil {
-			var recoveryInspector *geodatarecovery.Inspector
-			recoveryInspector, recoverySetupErr = geodatarecovery.New(geodatarecovery.Options{
-				Standard: standardInstaller, Custom: customRecovery, Domains: domainsStore,
-			})
-			if recoverySetupErr == nil {
-				var manager *geodatarecovery.Manager
-				manager, recoverySetupErr = geodatarecovery.NewManager(geodatarecovery.ManagerOptions{
-					Inspector: recoveryInspector, Standard: standardInstaller, Custom: customRecovery,
-				})
-				if recoverySetupErr == nil {
-					recoveryProvider = liveGeodataRecovery{manager: manager}
-					recoveryStatus = manager.Recover(ctx)
-				}
-			}
-		}
-	}
-	if recoverySetupErr != nil {
-		recoveryStatus = geodatarecovery.UnavailableStatus()
-	}
-	log.Printf("geodata recovery status: %s", recoveryStatus.Code)
+	var recoveryProvider geodataadmin.RecoveryProvider = cleanGeodataRecovery{}
 	geodataStore, err := geodataadmin.Open(ctx, config.Storage.Database, config.Geodata)
 	if err != nil {
 		return nil, err
 	}
 	cleanup.add(geodataStore.Close)
 	geodataService, err := geodataadmin.NewService(geodataadmin.ServiceOptions{
-		Store: geodataStore, Recovery: recoveryProvider,
+		Store: geodataStore, Settings: settingsService, Recovery: recoveryProvider,
 	})
 	if err != nil {
 		return nil, err
@@ -234,6 +205,13 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	domainReconciler, err := domainservice.NewRuntimeReconciler(domains, xrayservice.New().RuntimeIdentity)
 	if err != nil {
 		return nil, err
+	}
+	domainReconciler.BeforeApply = func(ctx context.Context, token string) error {
+		assets, err := reader.UserlistRoutingAssets(ctx)
+		if err != nil {
+			return err
+		}
+		return domainsStore.ActivateBaselines(ctx, token, config.Xray.AssetDir, assets)
 	}
 	geodataExecutor, err := newGeodataExecutor(config, geodataService, domainsStore, domains,
 		serviceController, routingClient)
@@ -365,44 +343,34 @@ func newGeodataExecutor(
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	var updater geodataadmin.Updater
-	if geodataSourcesEnabled(config.Geodata) {
-		if domainsStore == nil || overlay == nil || services == nil || routingHealth == nil {
-			return nil, errors.New("configured geodata update dependencies are required")
-		}
-		candidateValidator, err := candidatevalidation.New(config, candidatevalidation.Options{})
-		if err != nil {
-			return nil, err
-		}
-		installer, err := geodatainstall.New(config.Xray.AssetDir, nil, config.Geodata.MaxAssetSizeMB)
-		if err != nil {
-			return nil, err
-		}
-		custom, err := consolidation.New(domainsStore, config.Xray.AssetDir,
-			config.Geodata.Builder, candidateValidator, consolidation.Options{MaxAssetSizeMB: config.Geodata.MaxAssetSizeMB, GeositeName: config.Geodata.UserGeosite, GeoipName: config.Geodata.UserGeoip})
-		if err != nil {
-			return nil, err
-		}
-		restarter, err := geodataupdate.NewServiceControlRestarter(services)
-		if err != nil {
-			return nil, err
-		}
-		health, err := geodataupdate.NewRoutingServiceHealthVerifier(routingHealth)
-		if err != nil {
-			return nil, err
-		}
-		updater, err = geodataupdate.New(geodataupdate.Options{
-			Downloader:     geodatadownload.New(geodatadownload.Options{MaxAssetSizeMB: config.Geodata.MaxAssetSizeMB}),
-			Validator:      candidateValidator,
-			Installer:      installer,
-			Consolidation:  custom,
-			Restarter:      restarter,
-			HealthVerifier: health,
-			RuntimeOverlay: overlay,
-		})
-		if err != nil {
-			return nil, err
-		}
+
+	if domainsStore == nil || overlay == nil || services == nil {
+		return nil, errors.New("geodata update dependencies are required")
+	}
+	restarter, err := geodataupdate.NewServiceControlRestarter(services)
+	if err != nil {
+		return nil, err
+	}
+	updater, err := geodataupdate.NewCycle(geodataupdate.CycleOptions{
+		AssetDir: config.Xray.AssetDir, Store: domainsStore,
+		RoutingAssets: xrayconfig.NewReader(xrayconfig.Settings{Config: config.Xray.Config}).UserlistRoutingAssets,
+		Fetch: func(ctx context.Context, cfg bootstrap.GeodataConfig, name string) ([]byte, error) {
+			return geodatadownload.New(geodatadownload.Options{MaxAssetSizeMB: cfg.MaxAssetSizeMB}).FetchAsset(ctx, cfg, name)
+		},
+		Validate: func(ctx context.Context, cfg bootstrap.GeodataConfig, paths map[string]string) error {
+			current := config
+			current.Geodata = cfg
+			validator, err := candidatevalidation.New(current, candidatevalidation.Options{})
+			if err != nil {
+				return err
+			}
+			return validator.ValidateCandidates(ctx, paths)
+		},
+		Restart: restarter.RestartWhileLocked, Overlay: overlay.ApplyWhileLocked,
+		Identity: xrayservice.New().RuntimeIdentity,
+	})
+	if err != nil {
+		return nil, err
 	}
 	return geodataadmin.NewExecutor(admin, config.Geodata, updater)
 }
@@ -427,4 +395,10 @@ func (recovery liveGeodataRecovery) Status() geodatarecovery.Status {
 		return geodatarecovery.UnavailableStatus()
 	}
 	return status
+}
+
+type cleanGeodataRecovery struct{}
+
+func (cleanGeodataRecovery) Status() geodatarecovery.Status {
+	return geodatarecovery.Status{Code: geodatarecovery.RecoveryNone.String(), Result: geodatarecovery.Result{State: geodatarecovery.State{Phase: geodatarecovery.PhaseClean}, Plan: geodatarecovery.Plan{Phase: geodatarecovery.PhaseClean}}}
 }

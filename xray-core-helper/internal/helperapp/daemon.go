@@ -115,17 +115,17 @@ func (a *application) serveNormal(startupCtx context.Context, normal *normalBund
 	ctx, stop := lifecycle.notify(context.Background())
 	defer stop()
 	jobs := scheduler.MaintenanceJobs(a.config.Server.Socket)
-	if a.config.Scheduler.GeodataUpdateEnabled && geodataSourcesEnabled(a.config.Geodata) {
-		scheduleStore, err := scheduler.Open(ctx, a.config.Storage.Database)
-		if err != nil {
-			_ = normal.server.Close()
-			return errors.New("scheduler state unavailable")
-		}
-		defer scheduleStore.Close()
-		hour, minute := lifecycle.parseHHMM(a.config.Scheduler.GeodataUpdateTime)
-		job := scheduler.GeodataJob(a.config.Server.Socket, hour, minute)
-		jobs = append(jobs, scheduleStore.Persist(job, "geodata-"+a.config.Scheduler.GeodataUpdateTime))
+	scheduleStore, err := scheduler.Open(ctx, a.config.Storage.Database)
+	if err != nil {
+		_ = normal.server.Close()
+		return errors.New("scheduler state unavailable")
 	}
+	defer scheduleStore.Close()
+	jobs = append(jobs, scheduleStore.ConfiguredGeodata(a.config.Server.Socket, func(ctx context.Context) (bootstrap.SchedulerConfig, error) {
+		cfg, err := bootstrap.Load(a.configPath)
+		return cfg.Scheduler, err
+	}))
+
 	jobCtx, cancelJobs := context.WithCancel(ctx)
 	startJobs := lifecycle.startJobs
 	if startJobs == nil {

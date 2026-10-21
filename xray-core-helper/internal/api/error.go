@@ -1,6 +1,7 @@
 package api
 
 type ContractError struct {
+	Message        string
 	MaxAssetSizeMB int
 	Code           string
 	HTTPStatus     int

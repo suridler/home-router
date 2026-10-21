@@ -60,3 +60,25 @@ test('admin operations use only typed helper endpoints and payloads', async () =
   assert.equal(update.options.timeoutMs, MAX_REQUEST_TIMEOUT_MS);
   assert.equal(calls.some(call => call.path.includes('systemctl') || call.path.includes('config.json')), false);
 });
+
+test('geodata settings preserve explicit empty origins and never submit an executable', async () => {
+  let payload;
+  const service = createHelperAdminService({ helperClient: {
+    async request(method, path, options) {
+      assert.equal(method, 'PUT');
+      assert.equal(path, '/v1/xray/geodata/settings');
+      payload = options.body;
+      return payload;
+    }
+  } });
+  await service.saveGeodataSettings({ expectedGeneration: 42, originsText: '', maxAssetSizeMB: 512,
+    userGeosite: 'geosite_user.dat', userGeoip: 'geoip_user.dat', enabled: false, time: '05:30',
+    builder: '/must/not/execute', geositeUrl: 'https://data.example/geosite.dat', geositeSha256Url: 'https://data.example/geosite.sha256',
+    geoipUrl: 'https://data.example/geoip.dat', geoipSha256Url: 'https://data.example/geoip.sha256' });
+  assert.deepEqual(payload.settings.origins, []);
+  assert.deepEqual(payload.settings.schedule, { enabled: false, time: '05:30' });
+  assert.equal(payload.settings.maxAssetSizeMB, 512);
+  assert.equal(payload.settings.userGeoip, 'geoip_user.dat');
+  assert.equal(Object.hasOwn(payload.settings, 'builder'), false);
+  assert.equal(payload.expectedGeneration, 42);
+});

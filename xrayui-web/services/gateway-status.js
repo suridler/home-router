@@ -12,13 +12,13 @@ function gatewayStatus({ readiness, helperHealth, status, diagnostics, geodata, 
     && !['ok', 'unchecked', 'not_declared'].includes(check.status));
   const components = [
     { key: 'helper', title: 'Helper', state: helperHealth?.status === 'ok' ? 'ok' : 'unknown', label: helperHealth?.status === 'ok' ? 'API доступен' : 'Состояние helper не подтверждено' },
-    { key: 'xray', title: 'Xray', state: xray === 'ok' ? 'ok' : xray === 'mismatch' ? 'error' : 'unknown', label: xray === 'ok' ? 'Служба работает' : xray === 'mismatch' ? 'Служба остановлена' : 'Состояние службы недоступно' },
+    { key: 'xray', title: 'Xray', state: geodata.activation ? 'error' : xray === 'ok' ? 'ok' : xray === 'mismatch' ? 'error' : 'unknown', label: geodata.activation ? geodata.activation.message : xray === 'ok' ? 'Служба работает' : xray === 'mismatch' ? 'Служба остановлена' : 'Состояние службы недоступно' },
     { key: 'config', title: 'Конфигурация', state: configOK ? 'ok' : 'error', label: configOK ? 'Конфиг читается, изменений вне helper не обнаружено' : 'Конфиг недоступен, не разобран или изменён вне helper' },
     { key: 'system', title: 'Сеть и TProxy', state: failures.length || route === 'mismatch' ? 'error' : route !== 'ok' ? 'unknown' : 'ok',
       label: failures.length ? 'Обнаружены расхождения в настройках сети' : route === 'ok' ? 'Маршрут по умолчанию найден' : route === 'mismatch' ? 'Нет маршрута по умолчанию' : 'Маршрут не проверен',
       checks: checks.filter(check => check.name !== 'xray_service_active') },
     { key: 'tproxy', title: 'Сервис TProxy', state: tproxy === 'ok' ? 'ok' : tproxy === 'mismatch' ? 'disabled' : 'unknown', label: tproxy === 'ok' ? 'Работает; прохождение LAN-трафика не проверено' : tproxy === 'mismatch' ? 'Выключен' : 'Состояние недоступно' },
-    { key: 'geodata', title: 'Геоданные', state: geodata.health.state, label: geodata.health.state === 'disabled' ? 'Автообновление не настроено' : geodata.health.state === 'ok' ? 'Файлы доступны, обновление настроено' : geodata.health.label },
+    { key: 'geodata', title: 'Геоданные', state: geodata.health.state, label: geodata.health.state === 'disabled' ? 'Автообновление не настроено' : geodata.health.state === 'ok' ? 'Геобазы доступны' : geodata.health.label },
     { key: 'connectivity', title: 'Доступ в интернет', state: 'unverified', label: 'Сквозная проверка DNS/TLS/HTTP ещё не выполнена' }
   ];
   const known = new Set(configOK ? ['config'] : []);

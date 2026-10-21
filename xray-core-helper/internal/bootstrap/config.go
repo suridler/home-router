@@ -140,8 +140,9 @@ func Defaults() Config {
 			Builder:        "/usr/local/bin/domain-list-community",
 			UserGeosite:    DefaultUserGeositeName,
 			UserGeoip:      DefaultUserGeoipName,
-			Geosite:        defaultGeodataSource(),
-			Geoip:          defaultGeodataSource(),
+			Origins:        []string{"https://raw.githubusercontent.com"},
+			Geosite:        recommendedGeodataSource("geosite"),
+			Geoip:          recommendedGeodataSource("geoip"),
 		},
 		Storage: StorageConfig{Database: "/var/lib/xray-core-helper/helper.sqlite"},
 		Server: ServerConfig{
@@ -168,6 +169,13 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return config, nil
+}
+
+func recommendedGeodataSource(kind string) GeodataSourceConfig {
+	source := defaultGeodataSource()
+	source.URL = "https://raw.githubusercontent.com/runetfreedom/russia-blocked-" + kind + "/release/" + kind + ".dat"
+	source.Checksum.URL = source.URL + ".sha256sum"
+	return source
 }
 
 func defaultGeodataSource() GeodataSourceConfig {
@@ -307,7 +315,18 @@ func (config GeodataConfig) Validate() error {
 		return nil
 	}
 	if len(config.Origins) == 0 {
-		return fmt.Errorf("geodata.origins is required when remote sources are configured")
+		// An explicit empty allowlist disables remote requests, not custom builds.
+		// Keep configured URLs visible so the operator can correct the allowlist.
+		for _, item := range sources {
+			for _, value := range []string{item.source.URL, item.source.Checksum.URL} {
+				if value != "" {
+					if _, err := parseHTTPSURL(value, true); err != nil {
+						return fmt.Errorf("%s contains an invalid HTTPS URL", item.name)
+					}
+				}
+			}
+		}
+		return nil
 	}
 	for _, item := range sources {
 		if item.source.URL == "" || item.source.Checksum.URL == "" {

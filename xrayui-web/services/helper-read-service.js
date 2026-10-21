@@ -12,13 +12,12 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
   }
 
   async function getGeodataStatus() {
-    const [assets, versioned, update] = await Promise.all([
+    const [assets, update] = await Promise.all([
       helperClient.request('GET', '/v1/xray/geodata'),
-      helperClient.request('GET', '/v1/xray/geodata/settings'),
       helperClient.request('GET', '/v1/xray/geodata/update/status')
     ]);
+    const versioned = update.settings || {};
     const settings = versioned.settings || {};
-    const sourcesConfigured = Array.isArray(settings.origins) && settings.origins.length > 0;
     const files = (assets.files || []).map(file => ({
       name: file.name,
       path: file.path,
@@ -29,19 +28,30 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
     const missing = files.some(file => !file.exists);
     const recoveryBlocked = update.recovery?.mutationsBlocked === true;
     const failedOperation = update.operation?.state === 'failed';
+    const report = update.operation?.report;
+    const issues = (report?.issues || []).filter(issue => issue.warning !== true);
+    const activation = report?.activation || null;
+    const detail = activation || issues[0];
+    const stages = { checksum: 'Контрольная сумма', checksum_download: 'Скачивание контрольной суммы', prepare: 'Подготовка файлов', read: 'Чтение файлов', resources: 'Чтение ресурсов', save_state: 'Сохранение результата', cleanup: 'Очистка временных данных', lock: 'Ожидание операции', download: 'Скачивание', build: 'Сборка', test: 'Проверка Xray', test_installed: 'Проверка установленных файлов', write: 'Запись файла', restart: 'Перезапуск Xray', routing: 'Динамические правила', baseline: 'Сохранение ресурсов', baseline_prepare: 'Подготовка ресурсов', restore: 'Восстановление файла', runtime_identity: 'Состояние Xray' };
     const sizeLimit = update.operation?.errorCode === 'geodata_asset_too_large' && Number.isSafeInteger(update.maxAssetSizeMB) && update.maxAssetSizeMB > 0;
-    const failureLabel = sizeLimit ? `Размер файла геобазы превышает заданный лимит — ${update.maxAssetSizeMB} МБ` : 'Последнее обновление геоданных завершилось ошибкой';
-    const state = recoveryBlocked || failedOperation || missing ? 'error' : sourcesConfigured ? 'ok' : 'disabled';
+    const failureLabel = detail ? `${stages[detail.stage] || detail.stage}${detail.file ? ` · ${detail.file}` : ''}: ${detail.message}`
+      : sizeLimit ? `Размер файла геобазы превышает заданный лимит — ${update.maxAssetSizeMB} МБ`
+      : update.operation?.errorCode === 'geodata_interrupted' ? 'Предыдущее обновление прервано; подробности в журнале'
+      : 'Обновление не выполнено; откройте подробности операции';
+    const state = recoveryBlocked || failedOperation || missing ? 'error' : 'ok';
     const label = recoveryBlocked ? 'Требуется восстановление геоданных'
-      : failedOperation ? failureLabel
-        : missing ? 'Отсутствуют файлы геоданных'
-          : sourcesConfigured ? 'Обновление управляется helper' : 'Автообновление геоданных не настроено';
-    const modified = files.map(file => Date.parse(file.modifiedAt)).filter(Number.isFinite);
+      : failedOperation ? failureLabel : missing ? 'Отсутствуют файлы геоданных' : 'Геобазы обновлены';
+    const enabled = settings.schedule?.enabled === true;
 
     return {
       settings: {
-        enabled: sourcesConfigured,
-        time: '04:00',
+        enabled,
+        time: settings.schedule?.time || '04:00',
+        originsText: (settings.origins || []).join('\n'),
+        maxAssetSizeMB: settings.maxAssetSizeMB || update.maxAssetSizeMB || 256,
+        builder: settings.builder || '',
+        userGeosite: settings.userGeosite || '',
+        userGeoip: settings.userGeoip || '',
         assetDir: assets.assetDir,
         geositeUrl: settings.geosite?.url || '',
         geositeSha256Url: settings.geosite?.checksum?.url || '',
@@ -53,13 +63,16 @@ function createHelperReadService({ helperClient, controlEnabled, trafficReader }
       helperSettings: settings,
       files,
       installed: true,
-      timer: { active: sourcesConfigured, enabled: sourcesConfigured, managedBy: 'xray-core-helper' },
+      timer: { active: enabled, enabled, managedBy: 'xray-core-helper' },
       operation: update.operation || null,
+      activation,
+      failureLabel,
+      nextScheduledAt: update.nextScheduledAt || null,
       recovery: update.recovery,
       health: {
         state,
         label,
-        lastUpdatedAt: modified.length ? new Date(Math.min(...modified)).toISOString() : null
+        lastUpdatedAt: update.lastSuccessfulAt ? new Date(update.lastSuccessfulAt).toISOString() : null
       }
     };
   }

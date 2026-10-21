@@ -3,341 +3,37 @@ package geodataadmin
 import (
 	"context"
 	"errors"
+	"github.com/pelletier/go-toml/v2"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/coordinator"
-	"home-router/xray-core-helper/internal/geodatadownload"
-	"home-router/xray-core-helper/internal/geodatalimits"
-	"home-router/xray-core-helper/internal/geodatarecovery"
-	"home-router/xray-core-helper/internal/geodataupdate"
 )
 
-type executorRecovery struct{ status geodatarecovery.Status }
-
-func (recovery executorRecovery) Status() geodatarecovery.Status { return recovery.status }
-
-type updateFake struct {
+type reportUpdater struct {
 	calls  int
-	config bootstrap.GeodataConfig
-	err    error
+	cfg    bootstrap.GeodataConfig
+	report api.GeodataReport
+	cancel context.CancelFunc
+	after  func()
 }
 
-func (updater *updateFake) Update(_ context.Context, config bootstrap.GeodataConfig) error {
-	updater.calls++
-	updater.config = config
-	return updater.err
-}
-
-func executorFixture(t *testing.T, recovery geodatarecovery.Status, updater Updater) (*Service, *Executor) {
-	t.Helper()
-	resetCoordinatorForTest(t)
-	t.Cleanup(func() { resetCoordinatorForTest(t) })
-	initial := bootstrap.GeodataConfig{
-		Origins: []string{"https://initial.example"},
-		Builder: "/trusted/static/domain-list-builder",
-		Geosite: bootstrap.GeodataSourceConfig{
-			URL: "https://initial.example/geosite.dat",
-			Checksum: bootstrap.GeodataChecksumConfig{
-				URL: "https://initial.example/geosite.sha256", Algorithm: "sha256",
-			},
-		},
-		Geoip: bootstrap.GeodataSourceConfig{
-			URL: "https://initial.example/geoip.dat",
-			Checksum: bootstrap.GeodataChecksumConfig{
-				URL: "https://initial.example/geoip.sha256", Algorithm: "sha256",
-			},
-		},
+func (u *reportUpdater) UpdateReportProgress(ctx context.Context, cfg bootstrap.GeodataConfig, checkpoint func(api.GeodataReport) error) api.GeodataReport {
+	u.calls++
+	u.cfg = cfg
+	if err := checkpoint(api.GeodataReport{Process: "external", Stage: "download"}); err != nil {
+		panic(err)
 	}
-	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "helper.sqlite"), initial)
-	if err != nil {
-		t.Fatal(err)
+	if u.cancel != nil {
+		u.cancel()
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	service, err := NewService(ServiceOptions{Store: store, Recovery: executorRecovery{status: recovery}})
-	if err != nil {
-		t.Fatal(err)
+	if u.after != nil {
+		u.after()
 	}
-	executor, err := NewExecutor(service, initial, updater)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return service, executor
-}
-
-func executorCleanRecovery() geodatarecovery.Status {
-	return geodatarecovery.Status{
-		Code: geodatarecovery.RecoveryNone.String(),
-		Result: geodatarecovery.Result{
-			State: geodatarecovery.State{Phase: geodatarecovery.PhaseClean},
-			Plan:  geodatarecovery.Plan{Phase: geodatarecovery.PhaseClean},
-		},
-	}
-}
-
-func TestExecutorUsesPersistedSettingsAndReplaysWithoutRunningAgain(t *testing.T) {
-	updater := &updateFake{}
-	service, executor := executorFixture(t, executorCleanRecovery(), updater)
-	persisted := Settings{
-		Origins: []string{"https://persisted.example"},
-		Geosite: SourceSettings{URL: "https://persisted.example/site.dat",
-			Checksum: ChecksumSettings{URL: "https://persisted.example/site.sha256", Algorithm: "sha256"}},
-		Geoip: SourceSettings{URL: "https://persisted.example/ip.dat",
-			Checksum: ChecksumSettings{URL: "https://persisted.example/ip.sha256", Algorithm: "sha256"}},
-	}
-	if _, err := service.ReplaceSettings(context.Background(), 0, persisted); err != nil {
-		t.Fatal(err)
-	}
-	first, err := executor.Execute(context.Background(), "update-1")
-	if err != nil || first.State != OperationSucceeded {
-		t.Fatalf("Execute() = %#v, err=%v; want durable success", first, err)
-	}
-	if updater.calls != 1 || updater.config.Builder != "/trusted/static/domain-list-builder" ||
-		updater.config.Geosite.URL != persisted.Geosite.URL ||
-		updater.config.Geoip.Checksum.URL != persisted.Geoip.Checksum.URL ||
-		updater.config.Origins[0] != persisted.Origins[0] {
-		t.Fatalf("updater calls=%d config=%#v; persisted values or trusted builder were not used", updater.calls, updater.config)
-	}
-	replay, err := executor.Execute(context.Background(), "update-1")
-	if err != nil || replay.ID != first.ID || replay.State != OperationSucceeded || updater.calls != 1 {
-		t.Fatalf("replay = %#v, err=%v calls=%d; update must not execute twice", replay, err, updater.calls)
-	}
-}
-
-func TestExecutorRejectsActiveRequestAndConflictingKey(t *testing.T) {
-	updater := &updateFake{}
-	service, executor := executorFixture(t, executorCleanRecovery(), updater)
-	running, _, err := service.BeginUpdate(context.Background(), "running-key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := executor.Execute(context.Background(), "running-key")
-	if err != nil || replayed.ID != running.ID || updater.calls != 0 {
-		t.Fatalf("same-key running replay = %#v, err=%v calls=%d", replayed, err, updater.calls)
-	}
-	if _, err := executor.Execute(context.Background(), "other-key"); !executionErrorIs(err, "geodata_update_in_progress", 409) {
-		t.Fatalf("active-operation error = %v", err)
-	}
-}
-
-func TestExecutorRejectsAKeyReusedWithDifferentPersistedSettings(t *testing.T) {
-	updater := &updateFake{}
-	service, executor := executorFixture(t, executorCleanRecovery(), updater)
-	if _, _, err := service.BeginUpdate(context.Background(), "reused-key"); err != nil {
-		t.Fatal(err)
-	}
-	changed := Settings{
-		Origins: []string{"https://changed.example"},
-		Geosite: SourceSettings{URL: "https://changed.example/site.dat",
-			Checksum: ChecksumSettings{URL: "https://changed.example/site.sha256", Algorithm: "sha256"}},
-		Geoip: SourceSettings{URL: "https://changed.example/ip.dat",
-			Checksum: ChecksumSettings{URL: "https://changed.example/ip.sha256", Algorithm: "sha256"}},
-	}
-	if _, err := service.ReplaceSettings(context.Background(), 0, changed); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := executor.Execute(context.Background(), "reused-key"); !executionErrorIs(err, "idempotency_conflict", 409) {
-		t.Fatalf("reused key error = %v", err)
-	}
-	if updater.calls != 0 {
-		t.Fatalf("updater calls=%d; conflicting key must not execute", updater.calls)
-	}
-}
-
-func TestExecutorBlocksRecoveryAndUnavailableUpdater(t *testing.T) {
-	blocked := geodatarecovery.Status{
-		Code: geodatarecovery.ActionRetryInspection, MutationsBlocked: true,
-		Result: geodatarecovery.Result{State: geodatarecovery.State{Phase: geodatarecovery.PhaseInspectionFailed}},
-	}
-	_, executor := executorFixture(t, blocked, &updateFake{})
-	if _, err := executor.Execute(context.Background(), "blocked-key"); !executionErrorIs(err, "geodata_recovery_required", 503) {
-		t.Fatalf("recovery error = %v", err)
-	}
-
-	_, unavailable := executorFixture(t, executorCleanRecovery(), nil)
-	if _, err := unavailable.Execute(context.Background(), "unavailable-key"); !executionErrorIs(err, "geodata_update_unavailable", 503) {
-		t.Fatalf("unavailable error = %v", err)
-	}
-}
-
-func TestExecutorMapsAndPersistsUpdaterFailures(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		code FailureCode
-	}{
-		{name: "download", err: geodataupdate.ErrDownloadFailed, code: FailureDownloadFailed},
-		{name: "asset too large", err: errors.Join(geodataupdate.ErrDownloadFailed, &geodatalimits.Exceeded{LimitBytes: 256 << 20}), code: FailureAssetTooLarge},
-		{name: "checksum", err: errors.Join(geodataupdate.ErrDownloadFailed, geodatadownload.ErrChecksumMismatch), code: FailureChecksumFailed},
-		{name: "validation", err: geodataupdate.ErrValidationFailed, code: FailureValidationFailed},
-		{name: "install", err: geodataupdate.ErrInstallFailed, code: FailureInstallFailed},
-		{name: "restart", err: geodataupdate.ErrRestartFailed, code: FailureRestartFailed},
-		{name: "generic", err: errors.New("secret external output"), code: FailureUpdateFailed},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			updater := &updateFake{err: test.err}
-			service, executor := executorFixture(t, executorCleanRecovery(), updater)
-			if _, err := executor.Execute(context.Background(), "failed-key"); !executionErrorIs(err, string(test.code), 503) {
-				t.Fatalf("Execute() error = %v", err)
-			}
-			status, err := service.Status(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if status.Operation == nil || status.Operation.State != OperationFailed ||
-				status.Operation.ErrorCode != string(test.code) {
-				t.Fatalf("persisted operation = %#v", status.Operation)
-			}
-			if _, err := executor.Execute(context.Background(), "failed-key"); !executionErrorIs(err, string(test.code), 503) || updater.calls != 1 {
-				t.Fatalf("failed replay err=%v updater calls=%d", err, updater.calls)
-			}
-		})
-	}
-}
-
-func TestExecutorMarksRollbackFailureRecoveryRequired(t *testing.T) {
-	updater := &updateFake{err: geodataupdate.ErrRollbackFailed}
-	service, executor := executorFixture(t, executorCleanRecovery(), updater)
-	if _, err := executor.Execute(context.Background(), "recovery-key"); !executionErrorIs(err, "geodata_recovery_required", 503) {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	status, err := service.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Operation == nil || status.Operation.State != OperationRecoveryRequired {
-		t.Fatalf("persisted operation = %#v; want recovery_required", status.Operation)
-	}
-	if !coordinator.RecoveryBlocked() {
-		t.Fatal("rollback failure did not block the mutation coordinator")
-	}
-	if _, err := executor.Execute(context.Background(), "later-key"); !executionErrorIs(err, "geodata_recovery_required", 503) {
-		t.Fatalf("later update error = %v; want recovery-required refusal", err)
-	}
-	if updater.calls != 1 {
-		t.Fatalf("updater calls=%d; recovery-blocked update executed", updater.calls)
-	}
-	currentSettings, err := service.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	replacement := currentSettings.Settings
-	if _, err := service.ReplaceSettings(context.Background(), currentSettings.Generation, replacement); !errors.Is(err, ErrRecoveryRequired) {
-		t.Fatalf("settings replacement error = %v; want recovery-required", err)
-	}
-	unchanged, err := service.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if unchanged.Generation != currentSettings.Generation {
-		t.Fatalf("settings generation changed from %d to %d while recovery blocked", currentSettings.Generation, unchanged.Generation)
-	}
-	replay, replayed, err := service.BeginUpdate(context.Background(), "recovery-key")
-	if err != nil || !replayed || replay.ID != status.Operation.ID ||
-		replay.State != OperationRecoveryRequired || updater.calls != 1 {
-		t.Fatalf("same-key recovery replay=%#v replayed=%t err=%v calls=%d", replay, replayed, err, updater.calls)
-	}
-	if _, err := executor.Execute(context.Background(), "recovery-key"); !executionErrorIs(err, "geodata_recovery_required", 503) ||
-		updater.calls != 1 {
-		t.Fatalf("executor replay err=%v updater calls=%d", err, updater.calls)
-	}
-}
-
-func TestCoordinatorBlockRacingAdmissionFailsClosed(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		run  func(context.Context, *Service) error
-	}{
-		{
-			name: "new update",
-			run: func(ctx context.Context, service *Service) error {
-				_, _, _, err := service.BeginUpdateSnapshot(ctx, "race-update")
-				return err
-			},
-		},
-		{
-			name: "settings replacement",
-			run: func(ctx context.Context, service *Service) error {
-				_, err := service.ReplaceSettings(ctx, 0, configuredSettings())
-				return err
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			service, _ := executorFixture(t, executorCleanRecovery(), &updateFake{})
-			held, err := coordinator.Acquire(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			started := make(chan struct{})
-			result := make(chan error, 1)
-			go func() {
-				close(started)
-				result <- test.run(context.Background(), service)
-			}()
-			<-started
-			coordinator.Block()
-			held.Release()
-			if err := <-result; !errors.Is(err, ErrRecoveryRequired) {
-				t.Fatalf("racing mutation error=%v; want recovery-required", err)
-			}
-			settings, err := service.Settings(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if settings.Generation != 0 {
-				t.Fatalf("settings generation=%d; mutation crossed blocked admission", settings.Generation)
-			}
-			var operations int
-			if err := service.store.db.QueryRow("SELECT count(*) FROM geodata_update_operation").Scan(&operations); err != nil {
-				t.Fatal(err)
-			}
-			if operations != 0 {
-				t.Fatalf("operation rows=%d; admission crossed blocked gate", operations)
-			}
-			if !coordinator.RecoveryBlocked() {
-				t.Fatal("racing admission unblocked coordinator")
-			}
-		})
-	}
-}
-
-type cancelUpdateFake struct{ cancel context.CancelFunc }
-
-func (updater cancelUpdateFake) Update(context.Context, bootstrap.GeodataConfig) error {
-	updater.cancel()
-	return errors.Join(geodataupdate.ErrDownloadFailed, context.Canceled)
-}
-
-func TestExecutorFinishesDurablyAfterRequestCancellation(t *testing.T) {
-	service, _ := executorFixture(t, executorCleanRecovery(), nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	updater := cancelUpdateFake{cancel: cancel}
-	executor, err := NewExecutor(service, bootstrap.GeodataConfig{
-		Builder: "/trusted/static/domain-list-builder",
-		Geosite: bootstrap.GeodataSourceConfig{Checksum: bootstrap.GeodataChecksumConfig{Algorithm: "sha256"}},
-		Geoip:   bootstrap.GeodataSourceConfig{Checksum: bootstrap.GeodataChecksumConfig{Algorithm: "sha256"}},
-	}, updater)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := executor.Execute(ctx, "cancelled-key"); !executionErrorIs(err, string(FailureDownloadFailed), 503) {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	status, err := service.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Operation == nil || status.Operation.State != OperationFailed {
-		t.Fatalf("operation after cancellation = %#v; want durable failure", status.Operation)
-	}
-}
-
-func executionErrorIs(err error, code string, status int) bool {
-	var executionError *ExecutionError
-	return errors.As(err, &executionError) && executionError.Code == code && executionError.HTTPStatus == status
+	return u.report
 }
 
 func resetCoordinatorForTest(t *testing.T) {
@@ -347,27 +43,164 @@ func resetCoordinatorForTest(t *testing.T) {
 	}
 	lease, err := coordinator.AcquireMaintenance(context.Background())
 	if err != nil {
-		t.Fatalf("acquire recovery lease to reset test gate: %v", err)
+		t.Fatal(err)
 	}
 	if err := lease.Unblock(); err != nil {
 		lease.Release()
-		t.Fatalf("unblock coordinator test gate: %v", err)
+		t.Fatal(err)
 	}
 	lease.Release()
 }
 
-func TestSizeFailureAndReplayIncludeConfiguredLimit(t *testing.T) {
-	updater := &updateFake{err: errors.Join(geodataupdate.ErrDownloadFailed, &geodatalimits.Exceeded{LimitBytes: 512 << 20})}
-	_, executor := executorFixture(t, executorCleanRecovery(), updater)
-	executor.base.MaxAssetSizeMB = 512
-	for attempt := 0; attempt < 2; attempt++ {
-		_, err := executor.Execute(context.Background(), "size-replay")
-		var failure *ExecutionError
-		if !errors.As(err, &failure) || failure.Code != string(FailureAssetTooLarge) || failure.MaxAssetSizeMB != 512 {
-			t.Fatal(err)
-		}
+func TestExecutorUsesTOMLSnapshotAndReplaysWithoutRepeatingWork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	store, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
+	defer store.Close()
+	updater := &reportUpdater{}
+	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if updater.calls != 1 {
-		t.Fatal("replayed a failed update", updater.calls)
+	changed := configuredSettings()
+	changed.MaxAssetSizeMB = 512
+
+	changed.Geosite.URL = "https://data.example/new.dat"
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), changed); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := service.settings.Geodata(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Geodata.Builder = "/custom/builder"
+	encoded, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The administrator edits TOML. The running executor must use this value.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "config.toml"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := executor.Execute(context.Background(), "request-1")
+	if err != nil || first.State != OperationSucceeded {
+		t.Fatal(first, err)
+	}
+	if updater.cfg.MaxAssetSizeMB != 512 || updater.cfg.Builder != "/custom/builder" || updater.cfg.Geosite.URL != changed.Geosite.URL {
+		t.Fatal("not a TOML snapshot", updater.cfg)
+	}
+	replay, err := executor.Execute(context.Background(), "request-1")
+	if err != nil || replay.ID != first.ID || updater.calls != 1 {
+		t.Fatal("duplicate execution", err)
+	}
+	changed.MaxAssetSizeMB = 1024
+	changed.Builder = "/custom/builder"
+	if _, err := service.ReplaceSettings(context.Background(), currentGeneration(t, service), changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(context.Background(), "request-1"); !executionErrorIs(err, "idempotency_conflict", 409) {
+		t.Fatal(err)
+	}
+}
+
+func TestExecutorPersistsPartialResultsActivationAndWarnings(t *testing.T) {
+	for _, kind := range []string{"partial", "gateway", "warning", "cancelled"} {
+		t.Run(kind, func(t *testing.T) {
+			store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
+			defer store.Close()
+			report := api.GeodataReport{Replaced: 1, Files: []api.GeodataFileResult{{File: "geoip.dat", Process: "external", State: "replaced"}}}
+			issue := api.GeodataIssue{Process: "external", File: "geosite.dat", Stage: "checksum", Code: "geodata_external_checksum_failed", Message: "Контрольная сумма SHA256 не совпадает"}
+			if kind == "partial" {
+				report.Issues = []api.GeodataIssue{issue}
+			}
+			if kind == "gateway" {
+				issue.Process = "xray"
+				issue.Stage = "restart"
+				issue.Code = "geodata_xray_restart_failed"
+				report.Activation = &issue
+			}
+			if kind == "warning" {
+				issue.Stage = "cleanup"
+				issue.Warning = true
+				report.Issues = []api.GeodataIssue{issue}
+			}
+			updater := &reportUpdater{report: report}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if kind == "cancelled" {
+				updater.cancel = cancel
+			}
+			executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, runErr := executor.Execute(ctx, "update")
+			if (runErr != nil) != (kind == "partial" || kind == "gateway") {
+				t.Fatal("unexpected result", runErr)
+			}
+			status, err := service.Status(context.Background())
+			if err != nil || status.Operation == nil || status.Operation.Report == nil {
+				t.Fatal("result not persisted", err)
+			}
+			if kind == "gateway" && status.Operation.State != OperationSucceeded {
+				t.Fatal("gateway error marked file update failed")
+			}
+			if kind == "partial" && status.Operation.State != OperationFailed {
+				t.Fatal("partial failure hidden")
+			}
+			if kind == "warning" && status.Operation.State != OperationSucceeded {
+				t.Fatal("cleanup warning marked update failed")
+			}
+			if coordinator.RecoveryBlocked() {
+				t.Fatal("geodata blocked all mutations")
+			}
+			if status.Operation.Report.Replaced != 1 {
+				t.Fatal("partial success lost")
+			}
+		})
+	}
+}
+
+func TestInterruptedOperationBecomesRetryableAndKeepsReport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	store, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
+	op, _, err := service.BeginUpdate(context.Background(), "interrupted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.saveReport(context.Background(), op.ID, &api.GeodataReport{Process: "custom", Stage: "write"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, service := openFixture(t, path, bootstrapSettings(configuredSettings()), cleanRecovery())
+	defer reopened.Close()
+	status, err := service.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Operation.State != OperationFailed || status.Operation.ErrorCode != "geodata_interrupted" || status.Operation.Report.Stage != "write" {
+		t.Fatal("interrupted execution not reported", status.Operation)
+	}
+	if _, _, err := service.BeginUpdate(context.Background(), "retry"); err != nil {
+		t.Fatal("retry blocked", err)
+	}
+}
+
+func executionErrorIs(err error, code string, status int) bool {
+	var e *ExecutionError
+	return errors.As(err, &e) && e.Code == code && e.HTTPStatus == status
+}
+
+func TestExecutorReturnsKnownResultsWhenFinalPersistenceFails(t *testing.T) {
+	store, service := openFixture(t, filepath.Join(t.TempDir(), "state.sqlite"), bootstrapSettings(configuredSettings()), cleanRecovery())
+	updater := &reportUpdater{report: api.GeodataReport{Replaced: 1, Files: []api.GeodataFileResult{{File: "geoip.dat", State: "replaced"}}}, after: func() { store.Close() }}
+	executor, err := NewExecutor(service, bootstrap.Defaults().Geodata, updater)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := executor.Execute(context.Background(), "broken-final-state")
+	if !executionErrorIs(err, "geodata_cycle_save_state_failed", 503) || op.ID == "" || op.Report == nil || op.Report.Replaced != 1 {
+		t.Fatalf("lost final results: %+v %v", op, err)
 	}
 }

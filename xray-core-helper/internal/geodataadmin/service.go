@@ -15,6 +15,8 @@ import (
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/coordinator"
 	"home-router/xray-core-helper/internal/geodatarecovery"
+	"home-router/xray-core-helper/internal/scheduler"
+	"home-router/xray-core-helper/internal/systemsettings"
 )
 
 type RecoveryProvider interface {
@@ -31,12 +33,14 @@ func (systemClock) Now() time.Time { return time.Now() }
 
 type ServiceOptions struct {
 	Store    *Store
+	Settings *systemsettings.Service
 	Recovery RecoveryProvider
 	Clock    Clock
 }
 
 type Service struct {
 	store    *Store
+	settings *systemsettings.Service
 	recovery RecoveryProvider
 	clock    Clock
 }
@@ -48,9 +52,11 @@ type RecoveryProjection struct {
 }
 
 type Status struct {
-	Settings  VersionedSettings  `json:"settings"`
-	Operation *Operation         `json:"operation,omitempty"`
-	Recovery  RecoveryProjection `json:"recovery"`
+	Settings         VersionedSettings  `json:"settings"`
+	Operation        *Operation         `json:"operation,omitempty"`
+	Recovery         RecoveryProjection `json:"recovery"`
+	LastSuccessfulAt *int64             `json:"lastSuccessfulAt,omitempty"`
+	NextScheduledAt  *int64             `json:"nextScheduledAt,omitempty"`
 }
 
 type FailureCode string
@@ -64,27 +70,24 @@ const (
 	FailureRestartFailed    FailureCode = "geodata_restart_failed"
 	FailureRollbackFailed   FailureCode = "geodata_rollback_failed"
 	FailureUpdateFailed     FailureCode = "geodata_update_failed"
+	FailureInterrupted      FailureCode = "geodata_interrupted"
 )
 
 func NewService(options ServiceOptions) (*Service, error) {
-	if options.Store == nil || options.Recovery == nil {
+	if options.Store == nil || options.Settings == nil || options.Recovery == nil {
 		return nil, errors.New("geodata administration dependencies are required")
 	}
 	if options.Clock == nil {
 		options.Clock = systemClock{}
 	}
-	return &Service{store: options.Store, recovery: options.Recovery, clock: options.Clock}, nil
+	return &Service{store: options.Store, settings: options.Settings, recovery: options.Recovery, clock: options.Clock}, nil
 }
 
 func (service *Service) Settings(ctx context.Context) (VersionedSettings, error) {
 	if err := validContext(ctx); err != nil {
 		return VersionedSettings{}, err
 	}
-	state, err := service.store.readSnapshot(ctx)
-	if err != nil {
-		return VersionedSettings{}, err
-	}
-	return state.Settings, nil
+	return service.currentSettings(ctx)
 }
 
 func (service *Service) Status(ctx context.Context) (Status, error) {
@@ -95,10 +98,26 @@ func (service *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{
-		Settings: state.Settings, Operation: state.Operation,
-		Recovery: projectRecovery(service.recovery.Status()),
-	}, nil
+	settings, err := service.currentSettings(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	result := Status{Settings: settings, Operation: state.Operation, Recovery: projectRecovery(service.recovery.Status())}
+	var last sql.NullInt64
+	if err := service.store.db.QueryRowContext(ctx, "SELECT MAX(finished_at) FROM geodata_update_history WHERE state='succeeded'").Scan(&last); err != nil {
+		return Status{}, err
+	}
+	if last.Valid {
+		result.LastSuccessfulAt = &last.Int64
+	}
+	if settings.Settings.Schedule != nil && settings.Settings.Schedule.Enabled {
+		var hour, minute int
+		if _, err := fmt.Sscanf(settings.Settings.Schedule.Time, "%d:%d", &hour, &minute); err == nil {
+			next := scheduler.Daily(hour, minute)(service.clock.Now()).UnixMilli()
+			result.NextScheduledAt = &next
+		}
+	}
+	return result, nil
 }
 
 func (service *Service) ReplaceSettings(ctx context.Context, expectedGeneration uint64, settings Settings) (VersionedSettings, error) {
@@ -119,50 +138,38 @@ func (service *Service) ReplaceSettings(ctx context.Context, expectedGeneration 
 	if err := validateSettings(settings); err != nil {
 		return VersionedSettings{}, err
 	}
-	if expectedGeneration >= math.MaxInt64 {
+	if service.settings == nil {
+		return VersionedSettings{}, ErrInvalidSettings
+	}
+	cfg, generation, err := service.settings.Geodata(ctx)
+	if err != nil {
+		return VersionedSettings{}, err
+	}
+	if generation != expectedGeneration {
 		return VersionedSettings{}, ErrGenerationConflict
 	}
-	tx, err := service.store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return VersionedSettings{}, fmt.Errorf("begin geodata settings replacement: %w", err)
+	if settings.Builder != "" && settings.Builder != cfg.Geodata.Builder {
+		return VersionedSettings{}, ErrInvalidSettings
 	}
-	defer tx.Rollback()
-	current, err := readSettings(ctx, tx)
+	cfg.Geodata, err = RuntimeConfig(cfg.Geodata, settings)
 	if err != nil {
-		return VersionedSettings{}, fmt.Errorf("read geodata settings for replacement: %w", err)
+		return VersionedSettings{}, ErrInvalidSettings
 	}
-	if current.Generation != expectedGeneration {
+	if settings.Schedule != nil {
+		cfg.Scheduler.GeodataUpdateEnabled = settings.Schedule.Enabled
+		cfg.Scheduler.GeodataUpdateTime = settings.Schedule.Time
+	}
+	_, _, err = service.settings.PutGeodata(ctx, expectedGeneration, cfg.Geodata, cfg.Scheduler)
+	if errors.Is(err, systemsettings.ErrSettingsDrift) {
 		return VersionedSettings{}, ErrGenerationConflict
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE geodata_admin_settings SET
-		generation = ?, geosite_url = ?, geosite_checksum_url = ?, geosite_checksum_algorithm = ?,
-		geoip_url = ?, geoip_checksum_url = ?, geoip_checksum_algorithm = ?
-		WHERE singleton = 1 AND generation = ?`,
-		expectedGeneration+1, settings.Geosite.URL, settings.Geosite.Checksum.URL,
-		settings.Geosite.Checksum.Algorithm, settings.Geoip.URL,
-		settings.Geoip.Checksum.URL, settings.Geoip.Checksum.Algorithm, expectedGeneration)
+	if errors.Is(err, systemsettings.ErrInvalidSettings) {
+		return VersionedSettings{}, ErrInvalidSettings
+	}
 	if err != nil {
-		return VersionedSettings{}, fmt.Errorf("replace geodata settings: %w", err)
+		return VersionedSettings{}, err
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return VersionedSettings{}, fmt.Errorf("confirm geodata settings replacement: %w", err)
-	}
-	if rows != 1 {
-		return VersionedSettings{}, ErrGenerationConflict
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM geodata_admin_origin WHERE settings_singleton = 1"); err != nil {
-		return VersionedSettings{}, fmt.Errorf("replace geodata origins: %w", err)
-	}
-	for index, origin := range settings.Origins {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO geodata_admin_origin(origin_order, origin) VALUES (?, ?)", index, origin); err != nil {
-			return VersionedSettings{}, fmt.Errorf("replace geodata origins: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return VersionedSettings{}, fmt.Errorf("commit geodata settings replacement: %w", err)
-	}
-	return VersionedSettings{Generation: expectedGeneration + 1, Settings: cloneSettings(settings)}, nil
+	return service.currentSettings(ctx)
 }
 
 // BeginUpdate admits one durable update request against the current validated
@@ -199,7 +206,7 @@ func (service *Service) BeginUpdateSnapshot(ctx context.Context, idempotencyKey 
 		return Operation{}, VersionedSettings{}, false, fmt.Errorf("begin geodata update admission: %w", err)
 	}
 	defer tx.Rollback()
-	settings, err := readSettings(ctx, tx)
+	settings, err := service.currentSettings(ctx)
 	if err != nil {
 		return Operation{}, VersionedSettings{}, false, fmt.Errorf("read settings for geodata update: %w", err)
 	}
@@ -277,7 +284,7 @@ func (service *Service) readUpdateReplay(ctx context.Context, idempotencyKey str
 		return Operation{}, VersionedSettings{}, false, fmt.Errorf("begin geodata update replay lookup: %w", err)
 	}
 	defer tx.Rollback()
-	settings, err := readSettings(ctx, tx)
+	settings, err := service.currentSettings(ctx)
 	if err != nil {
 		return Operation{}, VersionedSettings{}, false, fmt.Errorf("read settings for geodata update replay: %w", err)
 	}
@@ -373,6 +380,11 @@ func (service *Service) finish(ctx context.Context, operationID string, state Op
 	if updated != 1 || updatedAt < createdAt {
 		return ErrStaleOperation
 	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO geodata_update_history(operation_id,report,state,finished_at) VALUES(?,'null',?,?)
+ ON CONFLICT(operation_id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at`, operationID, string(state), now); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit geodata operation completion: %w", err)
 	}
@@ -432,9 +444,16 @@ func validIdempotencyKey(key string) bool {
 func validFailureCode(code FailureCode) bool {
 	switch code {
 	case FailureAssetTooLarge, FailureDownloadFailed, FailureChecksumFailed, FailureValidationFailed,
-		FailureInstallFailed, FailureRestartFailed, FailureRollbackFailed, FailureUpdateFailed:
+		FailureInstallFailed, FailureRestartFailed, FailureRollbackFailed, FailureUpdateFailed, FailureInterrupted:
 		return true
 	default:
+		for _, process := range []string{"external", "custom", "cycle", "xray"} {
+			for _, stage := range []string{"download", "checksum_download", "checksum", "test", "test_installed", "prepare", "resources", "build", "read", "write", "baseline_prepare", "baseline", "lock", "runtime_identity", "save_state", "restore", "restart", "routing", "cleanup"} {
+				if string(code) == "geodata_"+process+"_"+stage+"_failed" {
+					return true
+				}
+			}
+		}
 		return false
 	}
 }
@@ -458,4 +477,15 @@ func validContext(ctx context.Context) error {
 		return errors.New("geodata administration context is required")
 	}
 	return ctx.Err()
+}
+
+func (s *Service) currentSettings(ctx context.Context) (VersionedSettings, error) {
+
+	cfg, generation, err := s.settings.Geodata(ctx)
+	if err != nil {
+		return VersionedSettings{}, err
+	}
+	settings, err := SettingsFromBootstrap(cfg.Geodata)
+	settings.Schedule = &api.GeodataSchedule{Enabled: cfg.Scheduler.GeodataUpdateEnabled, Time: cfg.Scheduler.GeodataUpdateTime}
+	return VersionedSettings{Generation: generation, Settings: settings}, err
 }

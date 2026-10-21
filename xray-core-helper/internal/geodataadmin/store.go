@@ -3,40 +3,21 @@ package geodataadmin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 
 	_ "modernc.org/sqlite"
 )
 
-const (
-	settingsTable  = "geodata_admin_settings"
-	originsTable   = "geodata_admin_origin"
-	operationTable = "geodata_update_operation"
-)
-
-const settingsDDL = `CREATE TABLE geodata_admin_settings (
-	singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-	generation INTEGER NOT NULL CHECK (generation >= 0),
-	geosite_url TEXT NOT NULL CHECK (length(geosite_url) <= 2048),
-	geosite_checksum_url TEXT NOT NULL CHECK (length(geosite_checksum_url) <= 2048),
-	geosite_checksum_algorithm TEXT NOT NULL CHECK (geosite_checksum_algorithm = 'sha256'),
-	geoip_url TEXT NOT NULL CHECK (length(geoip_url) <= 2048),
-	geoip_checksum_url TEXT NOT NULL CHECK (length(geoip_checksum_url) <= 2048),
-	geoip_checksum_algorithm TEXT NOT NULL CHECK (geoip_checksum_algorithm = 'sha256')
-)`
-
-const originsDDL = `CREATE TABLE geodata_admin_origin (
-	origin_order INTEGER PRIMARY KEY CHECK (origin_order BETWEEN 0 AND 15),
-	origin TEXT NOT NULL UNIQUE CHECK (length(origin) BETWEEN 1 AND 2048),
-	settings_singleton INTEGER NOT NULL DEFAULT 1 CHECK (settings_singleton = 1)
-		REFERENCES geodata_admin_settings(singleton) ON DELETE CASCADE
-)`
+const operationTable = "geodata_update_operation"
 
 const operationDDL = `CREATE TABLE geodata_update_operation (
 	singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -70,9 +51,14 @@ var (
 )
 
 type Settings struct {
-	Origins []string       `json:"origins"`
-	Geosite SourceSettings `json:"geosite"`
-	Geoip   SourceSettings `json:"geoip"`
+	MaxAssetSizeMB int                  `json:"maxAssetSizeMB,omitempty"`
+	Builder        string               `json:"builder,omitempty"`
+	UserGeosite    string               `json:"userGeosite,omitempty"`
+	UserGeoip      string               `json:"userGeoip,omitempty"`
+	Schedule       *api.GeodataSchedule `json:"schedule,omitempty"`
+	Origins        []string             `json:"origins"`
+	Geosite        SourceSettings       `json:"geosite"`
+	Geoip          SourceSettings       `json:"geoip"`
 }
 
 type SourceSettings struct {
@@ -100,18 +86,18 @@ const (
 )
 
 type Operation struct {
-	ID                 string         `json:"id"`
-	SettingsGeneration uint64         `json:"settingsGeneration"`
-	State              OperationState `json:"state"`
-	ResultCode         string         `json:"resultCode,omitempty"`
-	ErrorCode          string         `json:"errorCode,omitempty"`
-	CreatedAt          int64          `json:"createdAt"`
-	UpdatedAt          int64          `json:"updatedAt"`
-	FinishedAt         *int64         `json:"finishedAt,omitempty"`
+	Report             *api.GeodataReport `json:"report,omitempty"`
+	ID                 string             `json:"id"`
+	SettingsGeneration uint64             `json:"settingsGeneration"`
+	State              OperationState     `json:"state"`
+	ResultCode         string             `json:"resultCode,omitempty"`
+	ErrorCode          string             `json:"errorCode,omitempty"`
+	CreatedAt          int64              `json:"createdAt"`
+	UpdatedAt          int64              `json:"updatedAt"`
+	FinishedAt         *int64             `json:"finishedAt,omitempty"`
 }
 
 type snapshot struct {
-	Settings  VersionedSettings
 	Operation *Operation
 }
 
@@ -123,7 +109,7 @@ func Open(ctx context.Context, path string, initial bootstrap.GeodataConfig) (*S
 	if ctx == nil || ctx.Err() != nil {
 		return nil, errors.New("geodata store context is required")
 	}
-	seed, err := SettingsFromBootstrap(initial)
+	_, err := SettingsFromBootstrap(initial)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +137,7 @@ func Open(ctx context.Context, path string, initial bootstrap.GeodataConfig) (*S
 			return nil, fmt.Errorf("initialize geodata database: %w", err)
 		}
 	}
-	if err := store.initialize(ctx, seed); err != nil {
+	if err := store.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -164,6 +150,7 @@ func Open(ctx context.Context, path string, initial bootstrap.GeodataConfig) (*S
 
 func SettingsFromBootstrap(config bootstrap.GeodataConfig) (Settings, error) {
 	settings := Settings{
+		MaxAssetSizeMB: config.MaxAssetSizeMB, Builder: config.Builder, UserGeosite: config.UserGeosite, UserGeoip: config.UserGeoip,
 		Origins: append([]string{}, config.Origins...),
 		Geosite: SourceSettings{
 			URL: config.Geosite.URL,
@@ -184,53 +171,58 @@ func SettingsFromBootstrap(config bootstrap.GeodataConfig) (Settings, error) {
 	return settings, nil
 }
 
-func (store *Store) initialize(ctx context.Context, seed Settings) error {
+func (store *Store) initialize(ctx context.Context) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin geodata schema initialization: %w", err)
 	}
 	defer tx.Rollback()
 
-	existing := 0
-	for _, name := range []string{settingsTable, originsTable, operationTable} {
-		var count int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&count); err != nil {
-			return fmt.Errorf("inspect geodata schema: %w", err)
-		}
-		existing += count
+	if _, err := tx.ExecContext(ctx, strings.Replace(operationDDL, "CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)); err != nil {
+		return err
 	}
-	if existing != 0 && existing != 3 {
-		return errors.New("unsupported geodata database schema: incomplete administration tables")
+	var actual string
+	if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", operationTable).Scan(&actual); err != nil {
+		return err
 	}
-	for _, statement := range []string{settingsDDL, originsDDL, operationDDL} {
-		if _, err := tx.ExecContext(ctx, strings.Replace(statement, "CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)); err != nil {
-			return fmt.Errorf("create geodata administration schema: %w", err)
-		}
+	if normalizeSQL(actual) != normalizeSQL(operationDDL) {
+		return errors.New("unsupported geodata operation schema")
 	}
-	for name, expected := range map[string]string{
-		settingsTable: settingsDDL, originsTable: originsDDL, operationTable: operationDDL,
-	} {
-		var actual string
-		if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&actual); err != nil {
-			return fmt.Errorf("read geodata schema: %w", err)
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS geodata_update_history (
+ operation_id TEXT PRIMARY KEY, report TEXT NOT NULL, state TEXT NOT NULL, finished_at INTEGER
+ )`); err != nil {
+		return err
+	}
+	// The daemon owns the common runtime lock: a running record belongs to
+	// the previous process. Keep its last checkpoint and make retry available.
+	interrupted, interruptedErr := readOperation(ctx, tx)
+	if interruptedErr != nil && !errors.Is(interruptedErr, sql.ErrNoRows) {
+		return interruptedErr
+	}
+	if interruptedErr == nil && interrupted.State == OperationRunning {
+		report := interrupted.Report
+		if report == nil {
+			report = &api.GeodataReport{}
 		}
-		if normalizeSQL(actual) != normalizeSQL(expected) {
-			return fmt.Errorf("unsupported geodata database schema for table %q", name)
+		report.Issues = append(report.Issues, api.GeodataIssue{Process: report.Process, Stage: report.Stage, Code: "geodata_interrupted", Message: "Предыдущее выполнение прервано; файлы автоматически не откатывались", At: interrupted.UpdatedAt})
+		encoded, err := json.Marshal(report)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO geodata_update_history(operation_id,report,state,finished_at) VALUES(?,?,'failed',?)
+   ON CONFLICT(operation_id) DO UPDATE SET report=excluded.report,state='failed',finished_at=excluded.finished_at`, interrupted.ID, string(encoded), interrupted.UpdatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE geodata_update_operation SET state='failed',error_code='geodata_interrupted',finished_at=updated_at WHERE operation_id=? AND state='running'`, interrupted.ID); err != nil {
+			return err
 		}
 	}
 
-	versioned, err := readSettings(ctx, tx)
-	if errors.Is(err, sql.ErrNoRows) {
-		if err := writeSettings(ctx, tx, 0, seed); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return fmt.Errorf("read persisted geodata settings: %w", err)
-	} else if err := validateSettings(versioned.Settings); err != nil {
-		return fmt.Errorf("persisted geodata settings are invalid: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit geodata schema initialization: %w", err)
+	}
+	if interruptedErr == nil && interrupted.State == OperationRunning {
+		log.Printf("geodata operation=%s code=geodata_interrupted: previous execution interrupted; inspect operation status", interrupted.ID)
 	}
 	return nil
 }
@@ -243,13 +235,6 @@ func (store *Store) readSnapshot(ctx context.Context) (snapshot, error) {
 		return snapshot{}, fmt.Errorf("begin geodata snapshot: %w", err)
 	}
 	defer tx.Rollback()
-	settings, err := readSettings(ctx, tx)
-	if err != nil {
-		return snapshot{}, fmt.Errorf("read geodata settings: %w", err)
-	}
-	if err := validateSettings(settings.Settings); err != nil {
-		return snapshot{}, fmt.Errorf("persisted geodata settings are invalid: %w", err)
-	}
 	operation, err := readOperation(ctx, tx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot{}, fmt.Errorf("read geodata update operation: %w", err)
@@ -261,65 +246,7 @@ func (store *Store) readSnapshot(ctx context.Context) (snapshot, error) {
 	if err := tx.Commit(); err != nil {
 		return snapshot{}, fmt.Errorf("commit geodata snapshot: %w", err)
 	}
-	return snapshot{Settings: settings, Operation: current}, nil
-}
-
-func readSettings(ctx context.Context, queryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}) (VersionedSettings, error) {
-	var generation int64
-	settings := Settings{Origins: make([]string, 0)}
-	if err := queryer.QueryRowContext(ctx, `SELECT generation, geosite_url, geosite_checksum_url,
-		geosite_checksum_algorithm, geoip_url, geoip_checksum_url, geoip_checksum_algorithm
-		FROM geodata_admin_settings WHERE singleton = 1`).Scan(
-		&generation, &settings.Geosite.URL, &settings.Geosite.Checksum.URL,
-		&settings.Geosite.Checksum.Algorithm, &settings.Geoip.URL,
-		&settings.Geoip.Checksum.URL, &settings.Geoip.Checksum.Algorithm,
-	); err != nil {
-		return VersionedSettings{}, err
-	}
-	if generation < 0 {
-		return VersionedSettings{}, errors.New("geodata settings generation is invalid")
-	}
-	rows, err := queryer.QueryContext(ctx, "SELECT origin FROM geodata_admin_origin ORDER BY origin_order")
-	if err != nil {
-		return VersionedSettings{}, err
-	}
-	for rows.Next() {
-		var origin string
-		if err := rows.Scan(&origin); err != nil {
-			_ = rows.Close()
-			return VersionedSettings{}, err
-		}
-		settings.Origins = append(settings.Origins, origin)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return VersionedSettings{}, err
-	}
-	if err := rows.Close(); err != nil {
-		return VersionedSettings{}, err
-	}
-	return VersionedSettings{Generation: uint64(generation), Settings: settings}, nil
-}
-
-func writeSettings(ctx context.Context, tx *sql.Tx, generation uint64, settings Settings) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO geodata_admin_settings(
-		singleton, generation, geosite_url, geosite_checksum_url, geosite_checksum_algorithm,
-		geoip_url, geoip_checksum_url, geoip_checksum_algorithm
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`, generation, settings.Geosite.URL,
-		settings.Geosite.Checksum.URL, settings.Geosite.Checksum.Algorithm,
-		settings.Geoip.URL, settings.Geoip.Checksum.URL, settings.Geoip.Checksum.Algorithm)
-	if err != nil {
-		return fmt.Errorf("write geodata settings: %w", err)
-	}
-	for index, origin := range settings.Origins {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO geodata_admin_origin(origin_order, origin) VALUES (?, ?)", index, origin); err != nil {
-			return fmt.Errorf("write geodata origin: %w", err)
-		}
-	}
-	return nil
+	return snapshot{Operation: current}, nil
 }
 
 func readOperation(ctx context.Context, queryer interface {
@@ -340,6 +267,14 @@ func readOperation(ctx context.Context, queryer interface {
 	operation.State = OperationState(state)
 	if finished.Valid {
 		operation.FinishedAt = &finished.Int64
+	}
+	var reportJSON string
+	if err := queryer.QueryRowContext(ctx, "SELECT report FROM geodata_update_history WHERE operation_id=?", operation.ID).Scan(&reportJSON); err == nil && reportJSON != "null" {
+		if err := json.Unmarshal([]byte(reportJSON), &operation.Report); err != nil {
+			return Operation{}, err
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Operation{}, err
 	}
 	return operation, nil
 }
@@ -381,4 +316,16 @@ func validateSettings(settings Settings) error {
 
 func normalizeSQL(statement string) string {
 	return strings.ToLower(strings.Join(strings.Fields(statement), " "))
+}
+
+// Reports and history contain execution state only. Legacy settings tables, if
+// present, are intentionally ignored rather than imported or silently removed.
+func (s *Store) saveReport(ctx context.Context, id string, report *api.GeodataReport) error {
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO geodata_update_history(operation_id,report,state,finished_at) VALUES(?,?,'running',NULL)
+ ON CONFLICT(operation_id) DO UPDATE SET report=excluded.report`, id, string(encoded))
+	return err
 }

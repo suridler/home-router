@@ -60,6 +60,8 @@ var helperObjects = map[string]struct{}{
 	"geodata_admin_settings":   {},
 	"geodata_admin_origin":     {},
 	"geodata_update_operation": {},
+	"geodata_update_history":   {},
+	"geodata_pending_baseline": {},
 	"helper_schedule":          {},
 	"safe_apply_transaction":   {},
 	"safe_apply_one_pending":   {},
@@ -100,6 +102,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if _, err := db.ExecContext(ctx, pendingBaselineDDL); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	if err := os.Chmod(path, 0600); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("secure domain database: %w", err)

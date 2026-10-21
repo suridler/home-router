@@ -90,7 +90,8 @@ test('read-only web APIs use the fake helper when host config paths are unreadab
   assert.ok(calls.includes('/v1/xray/status'));
   assert.ok(calls.includes('/v1/xray/routing'));
   assert.ok(calls.includes('/v1/logs/error?limit=200'));
-  assert.ok(calls.includes('/v1/xray/geodata/settings'));
+  assert.ok(calls.includes('/v1/xray/geodata/update/status'));
+  assert.equal(calls.includes('/v1/xray/geodata/settings'), false);
 });
 
 test('dashboard reports onboarding evidence and keeps unavailable traffic distinct from zero', async () => {
@@ -153,4 +154,32 @@ test('geodata size failure shows the configured limit on the dashboard', async (
   const result = await service.getGeodataStatus();
   assert.equal(result.health.state, 'error');
   assert.equal(result.health.label, 'Размер файла геобазы превышает заданный лимит — 512 МБ');
+});
+
+test('geodata partial failure shows its stage and a successful retry clears the current error', async () => {
+  const { createHelperReadService } = require('../../services/helper-read-service');
+  const issue = { process: 'external', file: 'geosite.dat', stage: 'checksum', message: 'Контрольная сумма SHA256 не совпадает', code: 'geodata_external_checksum_failed', at: 1000 };
+  let operation = { id: 'op-1', state: 'failed', report: { issues: [issue], files: [{ file: 'geoip.dat', state: 'replaced' }] } };
+  const service = createHelperReadService({ controlEnabled: false, trafficReader: async () => ({}), helperClient: {
+    async request(_, path) {
+      if (path === '/v1/xray/geodata/settings') throw Error('redundant settings read');
+      if (path === '/v1/xray/geodata/update/status') return {
+        settings: { generation: 23, settings: { origins: [], builder: '/trusted/builder', schedule: { enabled: true, time: '04:00' } } },
+        lastSuccessfulAt: 2000, nextScheduledAt: 3000, operation
+      };
+      return helperPayload(path);
+    }
+  } });
+  let result = await service.getGeodataStatus();
+  assert.equal(result.health.state, 'error');
+  assert.match(result.health.label, /geosite.dat.*SHA256/);
+  assert.equal(result.operation.report.files[0].state, 'replaced');
+  assert.equal(result.health.lastUpdatedAt, new Date(2000).toISOString());
+  assert.equal(result.nextScheduledAt, 3000);
+  assert.equal(result.settings.builder, '/trusted/builder');
+  assert.equal(result.settings.expectedGeneration, 23);
+  operation = { id: 'op-2', state: 'succeeded', report: { issues: [], files: [] } };
+  result = await service.getGeodataStatus();
+  assert.equal(result.health.state, 'ok');
+  assert.equal(result.operation.id, 'op-2');
 });

@@ -151,25 +151,16 @@ recovery gate; во время consolidation overlay не применяется
 восстановления возвращает HTTP 503 `domain_runtime_reconcile_failed` и
 повторяется следующим тиком.
 
-Консолидация пользовательских geosite/geoip запускается `geodata update`:
-домены передаются в `[geodata].user_geosite` (по умолчанию
-`geosite_user.dat`, категория `USERLIST`), IPv4 — в `[geodata].user_geoip`
-(по умолчанию `geoip_user.dat`, категория `USERLIST`) как `/32`. Оба кандидата проверяются до замены,
-runtime согласуется до фиксации, после чего baseline пары фиксируется одной
-транзакцией. Один manifest хранит обе предыдущие версии; частичная замена
-восстанавливается через recovery, неизвестное внешнее изменение любого файла
-блокирует запись. До успешной консолидации записи видны в `desired` и runtime,
-но отсутствуют в USERLIST. После неё `desired` и `baseline` совпадают, а overlay
-пуст.
-
-Во время consolidation записи возвращают HTTP 409 `consolidation_active`;
-чтение остаётся доступным. Недоступность сервиса или recovery gate — HTTP 503
-`proxy_domain_unavailable`. Если runtime не построен/не применён после записи
-desired, add/delete возвращают HTTP 503 `domain_runtime_sync_failed`, явный
-apply — HTTP 503 `domain_runtime_apply_failed`. При обоих кодах запись могла
-сохраниться и успех применения не утверждается: клиент читает
-`GET /v1/proxy-domains`, не повторяет мутацию автоматически и после исправления
-конфигурации выполняет явный apply. Ошибка не является откатом.
+`geodata update` собирает домены в `[geodata].user_geosite` (default
+`geosite_user.dat`, USERLIST), IPv4 — в `[geodata].user_geoip` (default
+`geoip_user.dat`, USERLIST, /32). Сборка и скачивание внешних баз независимы;
+ошибка файла не отменяет допустимый результат остальных. У каждого процесса
+свой общий Xray test. После замен — один restart; без замен restart отсутствует.
+После нового runtime активируется baseline успешно загруженных файлов и
+восстанавливается overlay. Desired остаётся доступным; API-сбой повторяет reconciler.
+Неуспешный restart — ошибка шлюза без отката файлов. Ошибки desired/runtime
+возвращают прежние `domain_runtime_sync_failed`/`domain_runtime_apply_failed`;
+клиент перечитывает список вместо автоматического повторного add/delete.
 
 CLI сохраняет команду `proxy-domain`; `list` печатает JSON снимка, `add`/`delete`
 принимают оба типа. Активация нового заводского Xray-шаблона в release остаётся
@@ -326,9 +317,32 @@ redirect и proxy environment не используются. Таймаут 5..3
 Одновременный probe отклоняется `network_probe_busy` (409); устаревший ID —
 `probe_transaction_conflict` (409). Ошибка сохранения — 503, без автоматического повтора.
 
-Ограничение размера геобазы задаётся статически в `[geodata].max_asset_size_mb`
-helper (по умолчанию 256; 1 МБ = 1024 × 1024 байт). Статус обновления возвращает
-`maxAssetSizeMB`. При превышении обновление возвращает код
-`geodata_asset_too_large`, безопасное сообщение с текущим лимитом и
-`error.maxAssetSizeMB`; код сохраняется в failed operation. Изменение настройки
-требует перезапуска helper; не уменьшайте её во время pending/recovery.
+### Настройки и результаты обновления геобаз (G10)
+
+`GET/PUT /v1/xray/geodata/settings` читает и сохраняет TOML, не SQLite.
+`expectedGeneration` обязателен; generation — отпечаток эффективного снимка
+геонастроек и расписания, а не счётчик. Одинаковые настройки имеют одинаковую
+версию. Конкурирующая запись возвращает HTTP 409 `generation_conflict`.
+
+Settings содержит `origins`, `geosite`/`geoip` с `url` и `checksum:{url,algorithm}`,
+`maxAssetSizeMB`, `builder`, `userGeosite`, `userGeoip`,
+`schedule:{enabled,time}`. Builder доступен для чтения; смена исполняемой программы
+разрешена только ручной правкой TOML, API отклоняет другое значение. При отсутствии TOML-ключа применяется default helper.
+Явно пустые origins запрещают внешние запросы; пользовательская сборка независима.
+Для частичного API PUT пропущенные дополнительные поля сохраняют текущие
+значения. Источники передаются полностью. Предел файла default 256 МБ
+(1 МБ = 1024 × 1024 байт); изменение действует для следующей операции без restart helper.
+
+`POST /v1/xray/geodata/update` использует один снимок и прежний обязательный
+Idempotency-Key. HTTP-ошибка содержит безопасную причину и проекцию `operation`;
+повтор ключа не выполняет цикл снова. `GET .../update/status` возвращает settings,
+operation, `lastSuccessfulAt`, `nextScheduledAt` (Unix ms; отсутствует при выключенном
+расписании), `maxAssetSizeMB`. Старая конфигурация БД не импортируется.
+
+`operation.report` содержит `files:[{process,file,state}]`, `replaced`, `restarted`,
+`issues:[{process,file,stage,code,message,at,warning}]` и отдельную `activation`
+для критической ошибки шлюза. Partial failure — failed operation с сохранёнными
+успешными файлами. Сбой restart/routing не делает успешную замену баз failed.
+Ошибка cleanup — warning. История операций хранится в SQLite; journal связывается
+с панелью тем же ID и кодом. После прерывания сохраняется этап и
+`geodata_interrupted`; новая попытка доступна без общего recovery/rollback.

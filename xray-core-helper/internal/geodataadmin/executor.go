@@ -4,19 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"home-router/xray-core-helper/internal/geodatalimits"
+	"home-router/xray-core-helper/internal/api"
+	"log"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"home-router/xray-core-helper/internal/bootstrap"
-	"home-router/xray-core-helper/internal/coordinator"
-	"home-router/xray-core-helper/internal/geodatadownload"
-	"home-router/xray-core-helper/internal/geodataupdate"
 )
 
 type Updater interface {
-	Update(context.Context, bootstrap.GeodataConfig) error
+	UpdateReportProgress(context.Context, bootstrap.GeodataConfig, func(api.GeodataReport) error) api.GeodataReport
 }
 
 type Executor struct {
@@ -28,6 +26,7 @@ type Executor struct {
 type ExecutionError struct {
 	MaxAssetSizeMB int
 	Code           string
+	Message        string
 	HTTPStatus     int
 }
 
@@ -55,7 +54,7 @@ func (executor *Executor) Execute(ctx context.Context, key string) (Operation, e
 		return Operation{}, admissionError(err)
 	}
 	if replayed {
-		return operation, executor.sizeError(replayError(operation))
+		return operation, operationError(operation)
 	}
 
 	config, err := RuntimeConfig(executor.base, settings.Settings)
@@ -65,31 +64,59 @@ func (executor *Executor) Execute(ctx context.Context, key string) (Operation, e
 		}
 		return Operation{}, executionError(string(FailureUpdateFailed), http.StatusServiceUnavailable)
 	}
-	if err := executor.updater.Update(ctx, config); err != nil {
-		if errors.Is(err, geodataupdate.ErrRollbackFailed) {
-			coordinator.Block()
-			if finishErr := executor.finishRecoveryRequired(ctx, operation.ID); finishErr != nil {
-				return Operation{}, executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
-			}
-			return Operation{}, executionError("geodata_recovery_required", http.StatusServiceUnavailable)
-		}
-		failureCode := classifyFailure(err)
-		if finishErr := executor.finishFailure(ctx, operation.ID, failureCode); finishErr != nil {
-			return Operation{}, executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
-		}
-		return Operation{}, executor.sizeError(executionError(string(failureCode), http.StatusServiceUnavailable))
-	}
+
+	report := executor.updater.UpdateReportProgress(ctx, config, func(report api.GeodataReport) error {
+		checkpointCtx, cancel := completionContext(ctx)
+		defer cancel()
+		return executor.service.store.saveReport(checkpointCtx, operation.ID, &report)
+	})
 	finishCtx, cancel := completionContext(ctx)
 	defer cancel()
-	if err := executor.service.FinishSuccess(finishCtx, operation.ID); err != nil {
-		return Operation{}, executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
+	failed := false
+	for _, issue := range report.Issues {
+		log.Printf("geodata operation=%s process=%s file=%s stage=%s code=%s warning=%t: %s", operation.ID, issue.Process, issue.File, issue.Stage, issue.Code, issue.Warning, issue.Message)
+		failed = failed || !issue.Warning
+	}
+	if report.Activation != nil {
+		issue := report.Activation
+		log.Printf("gateway operation=%s stage=%s code=%s: %s", operation.ID, issue.Stage, issue.Code, issue.Message)
+	}
+	if err := executor.service.store.saveReport(finishCtx, operation.ID, &report); err != nil {
+		return persistenceFailure(operation, report)
+	}
+	if failed {
+		code := FailureUpdateFailed
+		for _, issue := range report.Issues {
+			if !issue.Warning {
+				code = FailureCode(issue.Code)
+				break
+			}
+		}
+		err = executor.service.FinishFailure(finishCtx, operation.ID, code)
+	} else {
+		err = executor.service.FinishSuccess(finishCtx, operation.ID)
+	}
+	if err != nil {
+		return persistenceFailure(operation, report)
 	}
 	status, err := executor.service.Status(finishCtx)
-	if err != nil || status.Operation == nil || status.Operation.ID != operation.ID ||
-		status.Operation.State != OperationSucceeded {
-		return Operation{}, executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
+	if err != nil || status.Operation == nil {
+		return persistenceFailure(operation, report)
 	}
-	return *status.Operation, nil
+	return *status.Operation, operationError(*status.Operation)
+}
+
+// Even if SQLite cannot retain the final report, preserve the known file result
+// in the HTTP response and journal instead of returning an unexplained 503.
+func persistenceFailure(operation Operation, report api.GeodataReport) (Operation, error) {
+	issue := api.GeodataIssue{Process: "cycle", Stage: "save_state", Code: "geodata_cycle_save_state_failed",
+		Message: "Не удалось сохранить или прочитать итог операции в SQLite", At: time.Now().UnixMilli()}
+	report.Issues = append(report.Issues, issue)
+	operation.Report, operation.State, operation.ErrorCode = &report, OperationFailed, issue.Code
+	log.Printf("geodata operation=%s process=cycle stage=save_state code=%s: %s", operation.ID, issue.Code, issue.Message)
+	// A prior activation failure remains primary in operationError, with this
+	// persistence failure retained as another visible issue in the same report.
+	return operation, operationError(operation)
 }
 
 func (executor *Executor) finishFailure(ctx context.Context, id string, code FailureCode) error {
@@ -98,20 +125,26 @@ func (executor *Executor) finishFailure(ctx context.Context, id string, code Fai
 	return executor.service.FinishFailure(finishCtx, id, code)
 }
 
-func (executor *Executor) finishRecoveryRequired(ctx context.Context, id string) error {
-	finishCtx, cancel := completionContext(ctx)
-	defer cancel()
-	return executor.service.FinishRecoveryRequired(finishCtx, id)
-}
-
 func completionContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 }
 
-// RuntimeConfig overlays only editable settings; the builder remains the
-// trusted static bootstrap value.
+// RuntimeConfig combines an admitted TOML snapshot with the startup defaults.
+// Builder changes are accepted only through manual TOML edits, never API writes.
 func RuntimeConfig(trusted bootstrap.GeodataConfig, settings Settings) (bootstrap.GeodataConfig, error) {
 	config := trusted
+	if settings.MaxAssetSizeMB != 0 {
+		config.MaxAssetSizeMB = settings.MaxAssetSizeMB
+	}
+	if settings.Builder != "" {
+		config.Builder = settings.Builder
+	}
+	if settings.UserGeosite != "" {
+		config.UserGeosite = settings.UserGeosite
+	}
+	if settings.UserGeoip != "" {
+		config.UserGeoip = settings.UserGeoip
+	}
 	config.Origins = append([]string{}, settings.Origins...)
 	config.Geosite = bootstrap.GeodataSourceConfig{
 		URL: settings.Geosite.URL,
@@ -160,38 +193,25 @@ func replayError(operation Operation) error {
 	return executionError("geodata_operation_unavailable", http.StatusServiceUnavailable)
 }
 
-func classifyFailure(err error) FailureCode {
-	var tooLarge *geodatalimits.Exceeded
-	switch {
-	case errors.Is(err, geodataupdate.ErrRollbackFailed):
-		return FailureRollbackFailed
-	case errors.As(err, &tooLarge):
-		return FailureAssetTooLarge
-	case errors.Is(err, geodataupdate.ErrRestartFailed):
-		return FailureRestartFailed
-	case errors.Is(err, geodataupdate.ErrValidationFailed):
-		return FailureValidationFailed
-	case errors.Is(err, geodataupdate.ErrInstallFailed):
-		return FailureInstallFailed
-	case errors.Is(err, geodataupdate.ErrDownloadFailed):
-		if errors.Is(err, geodatadownload.ErrChecksumMismatch) ||
-			errors.Is(err, geodatadownload.ErrInvalidChecksum) {
-			return FailureChecksumFailed
-		}
-		return FailureDownloadFailed
-	default:
-		return FailureUpdateFailed
-	}
-}
-
 func executionError(code string, status int) error {
 	return &ExecutionError{Code: code, HTTPStatus: status}
 }
 
-func (executor *Executor) sizeError(err error) error {
-	var failure *ExecutionError
-	if errors.As(err, &failure) && failure.Code == string(FailureAssetTooLarge) {
-		failure.MaxAssetSizeMB = geodatalimits.Bytes(executor.base.MaxAssetSizeMB) / geodatalimits.BytesPerMB
+func operationError(op Operation) error {
+	var issue *api.GeodataIssue
+	if op.Report != nil {
+		issue = op.Report.Activation
+		if issue == nil {
+			for i := range op.Report.Issues {
+				if !op.Report.Issues[i].Warning {
+					issue = &op.Report.Issues[i]
+					break
+				}
+			}
+		}
 	}
-	return err
+	if issue != nil {
+		return &ExecutionError{Code: issue.Code, HTTPStatus: 503, MaxAssetSizeMB: issue.MaxAssetSizeMB, Message: fmt.Sprintf("%s · %s · %s: %s (операция %s)", issue.Process, issue.File, issue.Stage, issue.Message, op.ID)}
+	}
+	return replayError(op)
 }

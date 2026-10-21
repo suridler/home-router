@@ -116,9 +116,23 @@ func postGeodataUpdate(executor GeodataUpdateExecutor) http.HandlerFunc {
 			var executionError *api.ContractError
 			if errors.As(err, &executionError) {
 				if executionError.Code == "geodata_asset_too_large" && geodatalimits.ValidMB(executionError.MaxAssetSizeMB) {
-					writeJSON(w, executionError.HTTPStatus, api.ErrorResponse{Error: api.ErrorDetail{Code: executionError.Code, Message: (&geodatalimits.Exceeded{LimitBytes: geodatalimits.Bytes(executionError.MaxAssetSizeMB)}).Error(), MaxAssetSizeMB: executionError.MaxAssetSizeMB}})
+					message := executionError.Message
+					if message == "" {
+						message = (&geodatalimits.Exceeded{LimitBytes: geodatalimits.Bytes(executionError.MaxAssetSizeMB)}).Error()
+					}
+					writeJSON(w, executionError.HTTPStatus, struct {
+						Error     api.ErrorDetail      `json:"error"`
+						Operation api.GeodataOperation `json:"operation"`
+					}{api.ErrorDetail{Code: executionError.Code, Message: message, MaxAssetSizeMB: executionError.MaxAssetSizeMB}, operation})
 				} else {
-					writeAPIError(w, executionError.HTTPStatus, executionError.Code, "geodata update could not be completed")
+					message := executionError.Message
+					if message == "" {
+						message = "Обновление не выполнено; подробности: /v1/xray/geodata/update/status"
+					}
+					writeJSON(w, executionError.HTTPStatus, struct {
+						Error     api.ErrorDetail      `json:"error"`
+						Operation api.GeodataOperation `json:"operation"`
+					}{api.ErrorDetail{Code: executionError.Code, Message: message}, operation})
 				}
 			} else {
 				writeAPIError(w, http.StatusServiceUnavailable, "geodata_operation_unavailable", "geodata update could not be completed")

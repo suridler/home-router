@@ -44,11 +44,12 @@ func (contract Contract) GetStatus(ctx context.Context) (api.GeodataStatusRespon
 		operation = &projected
 	}
 	return api.GeodataStatusResponse{
-		MaxAssetSizeMB: geodatalimits.Bytes(contract.MaxAssetSizeMB) / geodatalimits.BytesPerMB,
+		MaxAssetSizeMB: geodatalimits.Bytes(status.Settings.Settings.MaxAssetSizeMB) / geodatalimits.BytesPerMB,
 		Settings: api.VersionedGeodataSettings{
 			Generation: status.Settings.Generation,
 			Settings:   contractAPIGeodataSettings(status.Settings.Settings),
 		},
+		LastSuccessfulAt: status.LastSuccessfulAt, NextScheduledAt: status.NextScheduledAt,
 		Operation: operation,
 		Recovery: api.GeodataRecovery{
 			Phase: status.Recovery.Phase, Code: status.Recovery.Code,
@@ -94,8 +95,9 @@ func (contract Contract) Execute(ctx context.Context, key string) (api.GeodataOp
 	if err != nil {
 		var executionError *geodataadmin.ExecutionError
 		if errors.As(err, &executionError) {
-			return api.GeodataOperation{}, &api.ContractError{
-				Code: executionError.Code, HTTPStatus: executionError.HTTPStatus, MaxAssetSizeMB: executionError.MaxAssetSizeMB,
+			return contractAPIGeodataOperation(operation), &api.ContractError{
+				Message: executionError.Message,
+				Code:    executionError.Code, HTTPStatus: executionError.HTTPStatus, MaxAssetSizeMB: executionError.MaxAssetSizeMB,
 			}
 		}
 		return api.GeodataOperation{}, fmt.Errorf("execute geodata operation: %w", err)
@@ -105,6 +107,7 @@ func (contract Contract) Execute(ctx context.Context, key string) (api.GeodataOp
 
 func contractAdminSettings(settings api.GeodataSettings) geodataadmin.Settings {
 	return geodataadmin.Settings{
+		MaxAssetSizeMB: settings.MaxAssetSizeMB, Builder: settings.Builder, UserGeosite: settings.UserGeosite, UserGeoip: settings.UserGeoip, Schedule: settings.Schedule,
 		Origins: settings.Origins,
 		Geosite: geodataadmin.SourceSettings{
 			URL: settings.Geosite.URL,
@@ -123,6 +126,7 @@ func contractAdminSettings(settings api.GeodataSettings) geodataadmin.Settings {
 
 func contractAPIGeodataSettings(settings geodataadmin.Settings) api.GeodataSettings {
 	return api.GeodataSettings{
+		MaxAssetSizeMB: settings.MaxAssetSizeMB, Builder: settings.Builder, UserGeosite: settings.UserGeosite, UserGeoip: settings.UserGeoip, Schedule: settings.Schedule,
 		Origins: settings.Origins,
 		Geosite: api.GeodataSourceSettings{
 			URL: settings.Geosite.URL,
@@ -141,7 +145,8 @@ func contractAPIGeodataSettings(settings geodataadmin.Settings) api.GeodataSetti
 
 func contractAPIGeodataOperation(operation geodataadmin.Operation) api.GeodataOperation {
 	return api.GeodataOperation{
-		ID: operation.ID, SettingsGeneration: operation.SettingsGeneration,
+		Report: operation.Report,
+		ID:     operation.ID, SettingsGeneration: operation.SettingsGeneration,
 		State: string(operation.State), ResultCode: operation.ResultCode,
 		ErrorCode: operation.ErrorCode, CreatedAt: operation.CreatedAt,
 		UpdatedAt: operation.UpdatedAt, FinishedAt: operation.FinishedAt,

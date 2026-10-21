@@ -65,7 +65,7 @@ GOCACHE=${XCH_12D_GOCACHE:-/tmp/xray-core-helper-12d-go-cache} \
 echo "[fixtures] pending geodata rollback and recovery gate"
 GOCACHE=${XCH_12D_GOCACHE:-/tmp/xray-core-helper-12d-go-cache} \
   go test -count=1 -run 'Test(RollbackFailureRetainsEvidenceAndCanBeRetried|ExecutorMarksRollbackFailureRecoveryRequired)$' \
-  ./internal/geodatainstall ./internal/geodataadmin | tee "$audit/geodata-tests.txt"
+  ./internal/geodataupdate ./internal/domainstore ./internal/geodataadmin | tee "$audit/geodata-tests.txt"
 
 echo "[verify] production state was not changed by failure fixtures"
 after=$(helper_get /v1/xray/status)

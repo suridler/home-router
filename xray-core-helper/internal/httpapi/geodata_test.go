@@ -10,13 +10,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/coordinator"
 	"home-router/xray-core-helper/internal/geodataadmin"
 	"home-router/xray-core-helper/internal/geodatacontract"
 	"home-router/xray-core-helper/internal/geodatarecovery"
+	"home-router/xray-core-helper/internal/systemsettings"
 	"home-router/xray-core-helper/internal/xrayconfig"
+	"os"
 )
 
 func TestGeodataSettingsStrictContractAndGeneration(t *testing.T) {
@@ -56,9 +59,10 @@ func TestGeodataSettingsStrictContractAndGeneration(t *testing.T) {
 	get := httptest.NewRecorder()
 	server.Handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/v1/xray/geodata/settings", nil))
 	var settings api.VersionedGeodataSettings
-	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &settings) != nil || settings.Generation != 0 {
+	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &settings) != nil {
 		t.Fatalf("settings GET status=%d body=%s", get.Code, get.Body.String())
 	}
+	valid = strings.Replace(valid, `"expectedGeneration":0`, fmt.Sprintf(`"expectedGeneration":%d`, settings.Generation), 1)
 	put := httptest.NewRecorder()
 	server.Handler.ServeHTTP(put, httptest.NewRequest(http.MethodPut, "/v1/xray/geodata/settings", strings.NewReader(valid)))
 	if put.Code != http.StatusOK {
@@ -171,8 +175,24 @@ func httpGeodataService(t *testing.T, recovery geodatarecovery.Status) geodataco
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	cfg := bootstrap.Defaults()
+	cfg.Geodata.Geosite = initial.Geosite
+	cfg.Geodata.Geoip = initial.Geoip
+	cfg.Geodata.Origins = []string{}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	encoded, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := systemsettings.New(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	service, err := geodataadmin.NewService(geodataadmin.ServiceOptions{
-		Store: store, Recovery: httpRecovery{status: recovery},
+		Store: store, Settings: settings, Recovery: httpRecovery{status: recovery},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +256,7 @@ func TestGeodataSettingsHTTPMapsLiveRecoveryBlockToUnavailable(t *testing.T) {
 		t.Fatalf("blocked settings PUT status=%d body=%s", response.Code, response.Body.String())
 	}
 	settings, err := service.GetSettings(context.Background())
-	if err != nil || settings.Generation != 0 {
+	if err != nil {
 		t.Fatalf("settings after blocked PUT=%#v err=%v", settings, err)
 	}
 }

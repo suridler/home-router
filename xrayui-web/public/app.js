@@ -495,8 +495,8 @@ document.addEventListener('alpine:init', () => {
     async updateGeodata() {
       if (!this.canMutate()) return;
       this.pendingAction = 'geodata-update'; this.geodataMessage = 'Обновление геоданных…';
-      try { await this.api('/api/geodata/update', { method: 'POST', timeoutMs: 15 * 60 * 1000 }); this.geodataMessage = 'Геоданные обновлены.'; await Promise.all([this.loadGeodata(), this.loadStatus()]); }
-      catch (error) { this.geodataMessage = error.message; } finally { this.pendingAction = ''; }
+      try { await this.api('/api/geodata/update', { method: 'POST', timeoutMs: 15 * 60 * 1000 }); this.geodataMessage = ''; await Promise.all([this.loadGeodata(), this.loadStatus()]); }
+      catch (error) { await Promise.all([this.loadGeodata(), this.loadStatus()]); this.geodataMessage = this.geodata?.failureLabel || error.message; } finally { this.pendingAction = ''; }
     },
     async saveGeodata() {
       if (!this.canMutate()) return;

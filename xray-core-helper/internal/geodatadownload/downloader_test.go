@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,75 +21,25 @@ import (
 	"home-router/xray-core-helper/internal/geodatalimits"
 )
 
-func TestDownloadSuccessAndCleanupOwnership(t *testing.T) {
+func TestFetchAssetVerifiesEachFileIndependently(t *testing.T) {
 	assets := validAssets()
+	assets["geosite"] = []byte("tiny but checksum-valid")
 	server := newAssetServer(t, assets)
-	root := t.TempDir()
-	transport := &hostRestrictedTransport{
-		delegate: server.Client().Transport,
-		host:     server.Listener.Addr().String(),
-	}
-	files := &countingFileSystem{}
-	downloader := New(Options{
-		Transport:  transport,
-		FileSystem: files,
-		TempRoot:   root,
-		Wait:       noWait,
-	})
-
-	result, err := downloader.Download(context.Background(), configFor(server.URL))
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
-	for name, path := range map[string]string{
-		"geosite":          result.GeositePath,
-		"geoip":            result.GeoipPath,
-		"geosite checksum": result.GeositeChecksumPath,
-		"geoip checksum":   result.GeoipChecksumPath,
-	} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("stat %s: %v", name, err)
-		}
-		if info.Mode().Perm() != assetMode {
-			t.Errorf("%s permissions = %04o, want %04o", name, info.Mode().Perm(), assetMode)
+	downloader := New(Options{Transport: server.Client().Transport, Wait: noWait})
+	cfg := configFor(server.URL)
+	for _, name := range []string{"geosite", "geoip"} {
+		data, err := downloader.FetchAsset(context.Background(), cfg, name+".dat")
+		if err != nil || !bytes.Equal(data, assets[name]) {
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	dirInfo, err := os.Stat(result.Directory)
-	if err != nil {
+	cfg.Geosite.URL = server.URL + "/missing"
+	if _, err := downloader.FetchAsset(context.Background(), cfg, "geosite.dat"); !errors.Is(err, ErrDownload) {
 		t.Fatal(err)
 	}
-	if dirInfo.Mode().Perm() != directoryMode {
-		t.Errorf("directory permissions = %04o, want %04o", dirInfo.Mode().Perm(), directoryMode)
+	if _, err := downloader.FetchAsset(context.Background(), cfg, "geoip.dat"); err != nil {
+		t.Fatal("failure of geosite affected geoip", err)
 	}
-	for name, gotPath := range map[string]string{
-		"geosite": result.GeositePath,
-		"geoip":   result.GeoipPath,
-	} {
-		got, err := os.ReadFile(gotPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(got, assets[name]) {
-			t.Errorf("%s bytes differ from the verified response", name)
-		}
-	}
-	if transport.calls != 4 {
-		t.Errorf("requests = %d, want four requests to the httptest server only", transport.calls)
-	}
-	if !strings.HasPrefix(result.Directory, root+string(filepath.Separator)) {
-		t.Fatalf("result directory %q is outside injected root %q", result.Directory, root)
-	}
-	if err := result.Cleanup(); err != nil {
-		t.Fatalf("first Cleanup() error = %v", err)
-	}
-	if err := result.Cleanup(); err != nil {
-		t.Fatalf("second Cleanup() error = %v", err)
-	}
-	if files.removeCalls != 1 {
-		t.Errorf("RemoveAll calls = %d, want 1 for repeated cleanup", files.removeCalls)
-	}
-	assertEmpty(t, root)
 }
 
 func TestDownloadAcceptsGeositeAbovePrevious64MiBLimit(t *testing.T) {
@@ -97,16 +48,12 @@ func TestDownloadAcceptsGeositeAbovePrevious64MiBLimit(t *testing.T) {
 	assets := validAssets()
 	assets["geosite"] = bytes.Repeat([]byte("g"), size)
 	server := newAssetServer(t, assets)
-	downloader := New(Options{Transport: server.Client().Transport, TempRoot: t.TempDir(), Wait: noWait})
-	result, err := downloader.Download(context.Background(), configFor(server.URL))
-	if err != nil {
-		t.Fatal(err)
+	downloader := New(Options{Transport: server.Client().Transport, Wait: noWait})
+	data, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
+	if err != nil || len(data) != size {
+		t.Fatalf("downloaded bytes=%d: %v", len(data), err)
 	}
-	defer result.Cleanup()
-	info, err := os.Stat(result.GeositePath)
-	if err != nil || info.Size() != size {
-		t.Fatalf("downloaded asset: %v, %v", info, err)
-	}
+
 }
 
 func TestDownloadRejectsDeclaredSizeAbove256MB(t *testing.T) {
@@ -116,8 +63,8 @@ func TestDownloadRejectsDeclaredSizeAbove256MB(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
-	downloader := New(Options{Transport: server.Client().Transport, TempRoot: root, Wait: noWait})
-	_, err := downloader.Download(context.Background(), configFor(server.URL))
+	downloader := New(Options{Transport: server.Client().Transport, Wait: noWait})
+	_, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 	if !errors.Is(err, ErrResponseTooLarge) {
 		t.Fatalf("error = %v; want size rejection", err)
 	}
@@ -132,8 +79,8 @@ func TestDownloadUsesConfiguredSizeLimitAndReportsIt(t *testing.T) {
 	defer server.Close()
 	config := configFor(server.URL)
 	config.MaxAssetSizeMB = 1
-	downloader := New(Options{Transport: server.Client().Transport, TempRoot: t.TempDir(), Wait: noWait})
-	_, err := downloader.Download(context.Background(), config)
+	downloader := New(Options{Transport: server.Client().Transport, Wait: noWait})
+	_, err := downloader.FetchAsset(context.Background(), config, "geosite.dat")
 	var exceeded *geodatalimits.Exceeded
 	if !errors.As(err, &exceeded) || exceeded.LimitBytes != 1024*1024 {
 		t.Fatalf("missing configured limit: %v", err)
@@ -214,10 +161,9 @@ func TestDownloadRedirectPolicy(t *testing.T) {
 					delegate: first.Client().Transport,
 					host:     first.Listener.Addr().String(),
 				},
-				TempRoot: root,
-				Wait:     noWait,
+				Wait: noWait,
 			})
-			result, err := downloader.Download(context.Background(), config)
+			_, err := downloader.FetchAsset(context.Background(), config, "geosite.dat")
 			if test.wantErr != nil {
 				if !errors.Is(err, test.wantErr) {
 					t.Fatalf("Download() error = %v, want %v", err, test.wantErr)
@@ -231,7 +177,6 @@ func TestDownloadRedirectPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Download() error = %v", err)
 			}
-			defer result.Cleanup()
 			if !test.wantFollowed {
 				t.Fatal("test case must specify its expected redirect result")
 			}
@@ -250,11 +195,10 @@ func TestDownloadTimeoutAndCancellation(t *testing.T) {
 		root := t.TempDir()
 		downloader := New(Options{
 			Transport:      server.Client().Transport,
-			TempRoot:       root,
 			Wait:           noWait,
 			RequestTimeout: 100 * time.Millisecond,
 		})
-		_, err := downloader.Download(context.Background(), configFor(server.URL))
+		_, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 		if !errors.Is(err, ErrTimeout) {
 			t.Fatalf("Download() error = %v, want timeout", err)
 		}
@@ -272,12 +216,11 @@ func TestDownloadTimeoutAndCancellation(t *testing.T) {
 		root := t.TempDir()
 		downloader := New(Options{
 			Transport:      server.Client().Transport,
-			TempRoot:       root,
 			Wait:           noWait,
 			RequestTimeout: time.Second,
 			OverallTimeout: 20 * time.Millisecond,
 		})
-		_, err := downloader.Download(context.Background(), configFor(server.URL))
+		_, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 		if !errors.Is(err, ErrTimeout) {
 			t.Fatalf("Download() error = %v, want overall timeout", err)
 		}
@@ -298,12 +241,11 @@ func TestDownloadTimeoutAndCancellation(t *testing.T) {
 		root := t.TempDir()
 		downloader := New(Options{
 			Transport: server.Client().Transport,
-			TempRoot:  root,
 			Wait:      noWait,
 		})
 		done := make(chan error, 1)
 		go func() {
-			_, err := downloader.Download(ctx, configFor(server.URL))
+			_, err := downloader.FetchAsset(ctx, configFor(server.URL), "geosite.dat")
 			done <- err
 		}()
 		select {
@@ -352,13 +294,12 @@ func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 			waitCalls := 0
 			downloader := New(Options{
 				Transport: server.Client().Transport,
-				TempRoot:  t.TempDir(),
 				Wait: func(context.Context, time.Duration) error {
 					waitCalls++
 					return nil
 				},
 			})
-			result, err := downloader.Download(context.Background(), configFor(server.URL))
+			_, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 			if test.wantErr {
 				if !errors.Is(err, ErrDownload) {
 					t.Fatalf("Download() error = %v, want download error", err)
@@ -367,7 +308,6 @@ func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Download() error = %v", err)
 				}
-				defer result.Cleanup()
 			}
 			if got := hits.Load(); got != test.wantHits {
 				t.Errorf("geosite attempts = %d, want %d", got, test.wantHits)
@@ -422,9 +362,8 @@ func TestDownloadRejectsMalformedAndIncorrectChecksums(t *testing.T) {
 			root := t.TempDir()
 			_, err := New(Options{
 				Transport: server.Client().Transport,
-				TempRoot:  root,
 				Wait:      noWait,
-			}).Download(context.Background(), configFor(server.URL))
+			}).FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("Download() error = %v, want %v", err, test.wantErr)
 			}
@@ -440,28 +379,6 @@ func TestDownloadEnforcesAssetSizeAndTruncationLimits(t *testing.T) {
 		wantErr error
 		maxSize int64
 	}{
-		{
-			name: "undersized geosite",
-			handler: func(w http.ResponseWriter, r *http.Request, assets map[string][]byte) {
-				if r.URL.Path == "/geosite.dat" {
-					_, _ = w.Write(bytes.Repeat([]byte("s"), minimumAssetSize))
-					return
-				}
-				serveAsset(w, r, assets)
-			},
-			wantErr: ErrAssetTooSmall,
-		},
-		{
-			name: "undersized geoip",
-			handler: func(w http.ResponseWriter, r *http.Request, assets map[string][]byte) {
-				if r.URL.Path == "/geoip.dat" {
-					_, _ = w.Write(bytes.Repeat([]byte("s"), minimumAssetSize))
-					return
-				}
-				serveAsset(w, r, assets)
-			},
-			wantErr: ErrAssetTooSmall,
-		},
 		{
 			name: "oversized declared content length",
 			handler: func(w http.ResponseWriter, r *http.Request, assets map[string][]byte) {
@@ -494,7 +411,7 @@ func TestDownloadEnforcesAssetSizeAndTruncationLimits(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request, assets map[string][]byte) {
 				if r.URL.Path == "/geosite.dat" {
 					w.Header().Set("Content-Length", "2048")
-					_, _ = w.Write(bytes.Repeat([]byte("t"), minimumAssetSize))
+					_, _ = w.Write(bytes.Repeat([]byte("t"), 1024))
 					return
 				}
 				serveAsset(w, r, assets)
@@ -523,39 +440,18 @@ func TestDownloadEnforcesAssetSizeAndTruncationLimits(t *testing.T) {
 			root := t.TempDir()
 			downloader := New(Options{
 				Transport: server.Client().Transport,
-				TempRoot:  root,
 				Wait:      noWait,
 			})
 			if test.maxSize != 0 {
 				downloader.maxAssetSize = test.maxSize
 			}
-			_, err := downloader.Download(context.Background(), configFor(server.URL))
+			_, err := downloader.FetchAsset(context.Background(), configFor(server.URL), "geosite.dat")
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("Download() error = %v, want %v", err, test.wantErr)
 			}
 			assertEmpty(t, root)
 		})
 	}
-}
-
-func TestDownloadCleansPartialResultsWhenFilesystemFails(t *testing.T) {
-	assets := validAssets()
-	server := newAssetServer(t, assets)
-	root := t.TempDir()
-	files := &countingFileSystem{failOpen: "geoip.dat"}
-	_, err := New(Options{
-		Transport:  server.Client().Transport,
-		FileSystem: files,
-		TempRoot:   root,
-		Wait:       noWait,
-	}).Download(context.Background(), configFor(server.URL))
-	if err == nil || !strings.Contains(err.Error(), "write geoip.dat") {
-		t.Fatalf("Download() error = %v, want geoip file write failure", err)
-	}
-	if files.removeCalls != 1 {
-		t.Errorf("partial-result RemoveAll calls = %d, want 1", files.removeCalls)
-	}
-	assertEmpty(t, root)
 }
 
 func TestDownloadDoesNotUseLiveInternetForUntrustedSources(t *testing.T) {
@@ -568,9 +464,8 @@ func TestDownloadDoesNotUseLiveInternetForUntrustedSources(t *testing.T) {
 	config.Geosite.URL = "https://not-configured.invalid/geosite.dat"
 	_, err := New(Options{
 		Transport: transport,
-		TempRoot:  t.TempDir(),
 		Wait:      noWait,
-	}).Download(context.Background(), config)
+	}).FetchAsset(context.Background(), config, "geosite.dat")
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("Download() error = %v, want untrusted URL rejection", err)
 	}
@@ -606,8 +501,8 @@ func originFor(rawURL string) string {
 
 func validAssets() map[string][]byte {
 	return map[string][]byte{
-		"geosite": bytes.Repeat([]byte("g"), minimumAssetSize+17),
-		"geoip":   bytes.Repeat([]byte("i"), minimumAssetSize+23),
+		"geosite": bytes.Repeat([]byte("g"), 1024+17),
+		"geoip":   bytes.Repeat([]byte("i"), 1024+23),
 	}
 }
 
@@ -654,24 +549,6 @@ func (transport *hostRestrictedTransport) RoundTrip(request *http.Request) (*htt
 	return transport.delegate.RoundTrip(request)
 }
 
-type countingFileSystem struct {
-	osFileSystem
-	removeCalls int
-	failOpen    string
-}
-
-func (files *countingFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
-	if filepath.Base(name) == files.failOpen {
-		return nil, errors.New("injected file creation failure")
-	}
-	return files.osFileSystem.OpenFile(name, flag, perm)
-}
-
-func (files *countingFileSystem) RemoveAll(path string) error {
-	files.removeCalls++
-	return files.osFileSystem.RemoveAll(path)
-}
-
 func noWait(context.Context, time.Duration) error {
 	return nil
 }
@@ -684,5 +561,26 @@ func assertEmpty(t *testing.T, directory string) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("temporary root still contains partial output: %v", entries)
+	}
+}
+
+func TestTransportErrorsHaveSafeClassifications(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause, want error
+	}{
+		{"dns", &net.DNSError{Err: "private resolver details", Name: "secret.example"}, ErrDNS},
+		{"tls", &tls.CertificateVerificationError{Err: errors.New("private certificate")}, ErrTLS},
+		{"connection", errors.New("https://user:password@secret.example"), ErrConnection},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := transportError(nil, tc.cause)
+			if !errors.Is(err, tc.want) || !errors.Is(err, ErrDownload) {
+				t.Fatal(err)
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "private") {
+				t.Fatal("unsafe error", err)
+			}
+		})
 	}
 }

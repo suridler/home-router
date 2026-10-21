@@ -3,9 +3,47 @@ package api
 import "strings"
 
 type GeodataSettings struct {
-	Origins []string              `json:"origins"`
-	Geosite GeodataSourceSettings `json:"geosite"`
-	Geoip   GeodataSourceSettings `json:"geoip"`
+	MaxAssetSizeMB int                   `json:"maxAssetSizeMB,omitempty"`
+	Builder        string                `json:"builder,omitempty"`
+	UserGeosite    string                `json:"userGeosite,omitempty"`
+	UserGeoip      string                `json:"userGeoip,omitempty"`
+	Schedule       *GeodataSchedule      `json:"schedule,omitempty"`
+	Origins        []string              `json:"origins"`
+	Geosite        GeodataSourceSettings `json:"geosite"`
+	Geoip          GeodataSourceSettings `json:"geoip"`
+}
+
+type GeodataSchedule struct {
+	Enabled bool   `json:"enabled"`
+	Time    string `json:"time"`
+}
+
+type GeodataIssue struct {
+	MaxAssetSizeMB int    `json:"maxAssetSizeMB,omitempty"`
+	Process        string `json:"process"`
+	File           string `json:"file,omitempty"`
+	Stage          string `json:"stage"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
+	At             int64  `json:"at"`
+	Warning        bool   `json:"warning,omitempty"`
+}
+
+type GeodataFileResult struct {
+	Process string `json:"process"`
+	File    string `json:"file"`
+	State   string `json:"state"`
+}
+
+type GeodataReport struct {
+	EvidenceDirectory string              `json:"evidenceDirectory,omitempty"`
+	Process           string              `json:"process,omitempty"`
+	Stage             string              `json:"stage,omitempty"`
+	Files             []GeodataFileResult `json:"files"`
+	Issues            []GeodataIssue      `json:"issues"`
+	Activation        *GeodataIssue       `json:"activation,omitempty"`
+	Replaced          int                 `json:"replaced"`
+	Restarted         bool                `json:"restarted"`
 }
 
 type GeodataSourceSettings struct {
@@ -35,21 +73,24 @@ type GeodataRecovery struct {
 }
 
 type GeodataOperation struct {
-	ID                 string `json:"id"`
-	SettingsGeneration uint64 `json:"settingsGeneration"`
-	State              string `json:"state"`
-	ResultCode         string `json:"resultCode,omitempty"`
-	ErrorCode          string `json:"errorCode,omitempty"`
-	CreatedAt          int64  `json:"createdAt"`
-	UpdatedAt          int64  `json:"updatedAt"`
-	FinishedAt         *int64 `json:"finishedAt,omitempty"`
+	Report             *GeodataReport `json:"report,omitempty"`
+	ID                 string         `json:"id"`
+	SettingsGeneration uint64         `json:"settingsGeneration"`
+	State              string         `json:"state"`
+	ResultCode         string         `json:"resultCode,omitempty"`
+	ErrorCode          string         `json:"errorCode,omitempty"`
+	CreatedAt          int64          `json:"createdAt"`
+	UpdatedAt          int64          `json:"updatedAt"`
+	FinishedAt         *int64         `json:"finishedAt,omitempty"`
 }
 
 type GeodataStatusResponse struct {
-	MaxAssetSizeMB int                      `json:"maxAssetSizeMB,omitempty"`
-	Settings       VersionedGeodataSettings `json:"settings"`
-	Operation      *GeodataOperation        `json:"operation,omitempty"`
-	Recovery       GeodataRecovery          `json:"recovery"`
+	LastSuccessfulAt *int64                   `json:"lastSuccessfulAt,omitempty"`
+	NextScheduledAt  *int64                   `json:"nextScheduledAt,omitempty"`
+	MaxAssetSizeMB   int                      `json:"maxAssetSizeMB,omitempty"`
+	Settings         VersionedGeodataSettings `json:"settings"`
+	Operation        *GeodataOperation        `json:"operation,omitempty"`
+	Recovery         GeodataRecovery          `json:"recovery"`
 }
 
 type GeodataUpdateResponse struct {

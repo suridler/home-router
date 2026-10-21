@@ -57,8 +57,10 @@ implementation before changing a public contract.
   each API contract; setup/probe/service actions do not all share this field.
 - Preserve JSONC comments and unknown fields with narrow edits. Never rebuild
   the complete document for a small mutation.
-- A failed validation, restart or commit must leave or restore a complete
-  previously valid configuration.
+- A failed Xray config mutation must leave or restore the previous configuration.
+  Geodata uses the agreed independent-process contract: restore that process's
+  changed files only on failed Xray test; a restart failure is a gateway error
+  and never triggers automatic geodata rollback.
 - Tests must use temporary files, fake command runners and temporary sockets;
   they must not touch host Xray, systemd, `/etc`, `/usr/local`, or runtime DBs.
 
