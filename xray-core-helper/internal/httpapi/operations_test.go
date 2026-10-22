@@ -297,3 +297,13 @@ func TestTProxyActivationRequiresDurableSafeApply(t *testing.T) {
 		t.Fatal("unjournaled network activation")
 	}
 }
+
+func TestHelperJournalHTTP(t *testing.T) {
+	logs := &logsFake{result: logreader.Result{Kind: logreader.Helper, Source: logreader.SourceJournal, Lines: []string{"helper event"}}}
+	server := operationsServer(ServerServices{Logs: logs})
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/logs/helper?limit=25", nil))
+	if response.Code != http.StatusOK || !reflect.DeepEqual(logs.calls, []logCall{{kind: logreader.Helper, limit: 25}}) {
+		t.Fatalf("response=%d %s calls=%#v", response.Code, response.Body.String(), logs.calls)
+	}
+}

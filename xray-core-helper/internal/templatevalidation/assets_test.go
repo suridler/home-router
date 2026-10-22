@@ -17,6 +17,9 @@ func TestNativeXrayValidatorPassesExplicitAssetEnvironment(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s' \"$XRAY_LOCATION_ASSET\" > \"$4.environment\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(candidate, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	registry, err := NewWithAssets(nil, assets)
 	if err != nil {
 		t.Fatal(err)

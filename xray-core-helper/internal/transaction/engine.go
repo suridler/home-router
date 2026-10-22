@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"home-router/xray-core-helper/internal/coordinator"
+	"home-router/xray-core-helper/internal/nativebinding"
 )
 
 const maxTransactionConfigBytes = 16 << 20
@@ -70,8 +72,12 @@ func (engine *Engine) Initialize(ctx context.Context) error {
 	if err != nil {
 		return wrapOperation("read initial Xray configuration", err)
 	}
-	if _, err := engine.store.Initialize(ctx, snapshot.hash); err != nil {
+	metadata, err := engine.store.Initialize(ctx, snapshot.hash)
+	if err != nil {
 		return wrapOperation("initialize configuration metadata", err)
+	}
+	if metadata.ContentHash == snapshot.hash {
+		return engine.saveAccepted(snapshot)
 	}
 	return nil
 }
@@ -113,7 +119,7 @@ func (engine *Engine) MutateConfirmedLogging(ctx context.Context, generation uin
 	if prepare == nil || options.Enabled == nil {
 		return Metadata{}, errors.New("confirmed logging dependencies are required")
 	}
-	return engine.mutateOptions(ctx, generation, plan, restart, prepare, &options)
+	return engine.mutateOptions(ctx, generation, plan, restart, prepare, &options, false)
 }
 
 func (engine *Engine) mutate(
@@ -123,15 +129,20 @@ func (engine *Engine) mutate(
 	restart bool,
 	prepare PrepareMutation,
 ) (result Metadata, resultErr error) {
-	return engine.mutateOptions(ctx, expectedGeneration, plan, restart, prepare, nil)
+	return engine.mutateOptions(ctx, expectedGeneration, plan, restart, prepare, nil, false)
 }
 
-func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint64, plan Planner, restart bool, prepare PrepareMutation, logging *ConfirmedLoggingOptions) (result Metadata, resultErr error) {
+func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint64, plan Planner, restart bool, prepare PrepareMutation, logging *ConfirmedLoggingOptions, restoreExternal bool) (result Metadata, resultErr error) {
 	lease, err := coordinator.Acquire(ctx)
 	if err != nil {
 		return Metadata{}, err
 	}
 	defer lease.Release()
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		engine.pruneAccepted(cleanupCtx)
+	}()
 	var preparation MutationPreparation
 	committedConfig := false
 	defer func() {
@@ -172,7 +183,7 @@ func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint
 	if err != nil {
 		return Metadata{}, wrapOperation("read current Xray configuration", err)
 	}
-	if previous.hash != metadata.ContentHash {
+	if previous.hash != metadata.ContentHash && !restoreExternal {
 		return Metadata{}, ErrStateDrift
 	}
 	edits, err := plan(previous.content)
@@ -221,6 +232,9 @@ func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint
 	}
 	defer removeArtifact(candidatePath)
 	if err := engine.validator.Validate(ctx, candidatePath); err != nil {
+		if errors.Is(err, ErrMarkupInvalid) {
+			return Metadata{}, ErrMarkupInvalid
+		}
 		return Metadata{}, publicError("validation_failed", "Xray rejected the candidate configuration", 422, ErrValidationFailed)
 	}
 	current, err := readSnapshot(engine.configPath)
@@ -229,6 +243,17 @@ func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint
 	}
 	if current.hash != previous.hash {
 		return Metadata{}, ErrStateDrift
+	}
+	if previous.hash == metadata.ContentHash {
+		if err := engine.saveAccepted(previous); err != nil {
+			return Metadata{}, err
+		}
+	}
+	acceptedCandidate := previous
+	acceptedCandidate.content = candidate
+	acceptedCandidate.hash = nextHash
+	if err := engine.saveAccepted(acceptedCandidate); err != nil {
+		return Metadata{}, err
 	}
 	if err := writeArtifact(backupPath, previous.content, previous.mode, previous.uid, previous.group); err != nil {
 		return Metadata{}, wrapOperation("write configuration backup", err)
@@ -247,6 +272,7 @@ func (engine *Engine) mutateOptions(ctx context.Context, expectedGeneration uint
 		Phase:              "staged",
 		PreviousGeneration: metadata.Generation,
 		PreviousHash:       previous.hash,
+		PreviousStateHash:  metadata.ContentHash,
 		NextHash:           nextHash,
 		CandidatePath:      candidatePath,
 		BackupPath:         backupPath,
@@ -338,21 +364,57 @@ func (engine *Engine) Adopt(ctx context.Context, expectedGeneration uint64) (Met
 	if snapshot.hash == metadata.ContentHash {
 		return metadata, false, nil
 	}
+	log.Print("xray config drift detected; validating current configuration and helper annotations")
 	if err := engine.validator.Validate(ctx, engine.configPath); err != nil {
-		return Metadata{}, false, publicError("validation_failed", "Xray rejected the external configuration", 422, ErrValidationFailed)
+		if errors.Is(err, ErrMarkupInvalid) {
+			log.Print("xray config adoption rejected: helper annotations are invalid")
+			return Metadata{}, false, publicError("config_markup_invalid", "Xray configuration helper annotations are invalid; configuration was not adopted", 422, ErrMarkupInvalid)
+		}
+		log.Print("xray config adoption rejected: Xray validation failed")
+		return Metadata{}, false, publicError("validation_failed", "Xray rejected the external configuration; configuration was not adopted", 422, ErrValidationFailed)
 	}
+	log.Print("xray config validation passed")
+
 	confirmed, err := readSnapshot(engine.configPath)
 	if err != nil {
 		return Metadata{}, false, wrapOperation("recheck external Xray configuration", err)
 	}
 	if confirmed.hash != snapshot.hash {
+		log.Print("xray config adoption cancelled: configuration changed during validation")
 		return Metadata{}, false, ErrStateDrift
 	}
-	adopted, err := engine.store.Adopt(ctx, expectedGeneration, confirmed.hash)
+	previousHash := ""
+	if prior, err := readSnapshot(engine.acceptedPath(metadata.ContentHash)); err == nil && prior.hash == metadata.ContentHash {
+		previousHash = metadata.ContentHash
+	}
+	if err := engine.saveAccepted(confirmed); err != nil {
+		return Metadata{}, false, err
+	}
+	adopted, err := engine.store.adopt(ctx, expectedGeneration, confirmed.hash, previousHash)
 	if err != nil {
 		return Metadata{}, false, err
 	}
+	engine.pruneAccepted(ctx)
+	log.Printf("xray config adopted; generation=%d", adopted.Generation)
 	return adopted, true, nil
+}
+
+// ReconcileDrift validates and adopts external edits when state is requested.
+// It never rewrites the config or restarts Xray. Pending recovery is left alone.
+func (engine *Engine) ReconcileDrift(ctx context.Context) error {
+	metadata, err := engine.store.Metadata(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot, err := readSnapshot(engine.configPath)
+	if err != nil {
+		return err
+	}
+	if snapshot.hash == metadata.ContentHash {
+		return nil
+	}
+	_, _, err = engine.Adopt(ctx, metadata.Generation)
+	return err
 }
 
 func (engine *Engine) Recover(ctx context.Context) error {
@@ -375,7 +437,7 @@ func (engine *Engine) Recover(ctx context.Context) error {
 	if pending == nil {
 		return nil
 	}
-	if metadata.Generation != pending.PreviousGeneration || metadata.ContentHash != pending.PreviousHash {
+	if metadata.Generation != pending.PreviousGeneration || metadata.ContentHash != pending.stateHash() {
 		return engine.recoveryError(ErrStateDrift)
 	}
 	if !engine.validArtifactPath(pending.CandidatePath, "candidate") || !engine.validArtifactPath(pending.BackupPath, "backup") {
@@ -632,6 +694,10 @@ func NewXrayValidator(binary string, assetDir string) (*XrayValidator, error) {
 }
 
 func (validator *XrayValidator) Validate(ctx context.Context, configPath string) error {
+	if _, err := nativebinding.ParseFile(configPath); err != nil {
+		return ErrMarkupInvalid
+	}
+
 	command := exec.CommandContext(ctx, validator.binary, "run", "-test", "-config", configPath)
 	command.Env = []string{"XRAY_LOCATION_ASSET=" + validator.assetDir}
 	command.Stdout = io.Discard

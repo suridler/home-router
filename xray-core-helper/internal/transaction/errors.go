@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	ErrMarkupInvalid      = errors.New("Xray configuration helper annotations are invalid")
 	ErrValidationFailed   = errors.New("Xray rejected the candidate configuration")
 	ErrRestartFailed      = errors.New("Xray restart failed")
 	ErrRollbackFailed     = errors.New("configuration rollback failed")
@@ -30,12 +31,16 @@ func ErrorInfo(err error) (code, message string, status int) {
 		return publicErr.Code, publicErr.Message, publicErr.HTTPStatus
 	}
 	switch {
+	case errors.Is(err, ErrRollbackUnavailable):
+		return "config_rollback_unavailable", "Previous accepted configuration is unavailable", 409
 	case errors.Is(err, ErrStaleGeneration):
 		return "generation_conflict", "expected configuration generation is stale", 409
 	case errors.Is(err, ErrStateDrift):
 		return "config_drift", "configuration differs from committed state; adopt it after validation", 409
 	case errors.Is(err, ErrTransactionBusy):
 		return "transaction_in_progress", "a configuration transaction is pending", 409
+	case errors.Is(err, ErrMarkupInvalid):
+		return "config_markup_invalid", "Xray configuration helper annotations are invalid", 422
 	case errors.Is(err, ErrValidationFailed):
 		return "validation_failed", "Xray rejected the candidate configuration", 422
 	case errors.Is(err, ErrRestartFailed):

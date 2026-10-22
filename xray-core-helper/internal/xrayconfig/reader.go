@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"home-router/xray-core-helper/internal/api"
+	"home-router/xray-core-helper/internal/transaction"
 )
 
 const maxConfigBytes = 16 << 20
@@ -34,8 +35,9 @@ type Settings struct {
 }
 
 type Reader struct {
-	settings Settings
-	metadata MetadataSource
+	settings  Settings
+	metadata  MetadataSource
+	reconcile func(context.Context) error
 }
 
 type MetadataSource interface {
@@ -122,6 +124,20 @@ func NewReader(settings Settings, metadata ...MetadataSource) Reader {
 	return reader
 }
 
+// WithDriftReconciler enables validation/adoption only on state observations.
+// Low-level projections remain read-only, including inside mutation planners.
+func (reader Reader) WithDriftReconciler(reconcile func(context.Context) error) Reader {
+	reader.reconcile = reconcile
+	return reader
+}
+
+func (reader Reader) reconcileState(ctx context.Context) error {
+	if reader.reconcile != nil {
+		return reader.reconcile(ctx)
+	}
+	return nil
+}
+
 func (reader Reader) Runtime() api.RuntimeResponse {
 	return api.RuntimeResponse{
 		Binary:          reader.settings.Binary,
@@ -165,8 +181,13 @@ func uniqueTags(value any) []string {
 }
 
 func (reader Reader) Status(ctx context.Context) api.StatusResponse {
+	reconcileErr := reader.reconcileState(ctx)
 	doc, err := reader.readDocument(ctx)
-	return statusProjection(reader.Runtime(), doc, err)
+	status := statusProjection(reader.Runtime(), doc, err)
+	if reconcileErr != nil && status.ConfigDrift {
+		_, status.ConfigError, _ = transaction.ErrorInfo(reconcileErr)
+	}
+	return status
 }
 
 func statusProjection(runtime api.RuntimeResponse, doc *document, err error) api.StatusResponse {
@@ -841,8 +862,12 @@ func isJSONSpace(value byte) bool {
 // Overview reads and parses JSONC once. Each projection carries the same
 // metadata; no cached document survives the request or hides an external edit.
 func (reader Reader) Overview(ctx context.Context) api.XrayOverviewResponse {
+	reconcileErr := reader.reconcileState(ctx)
 	doc, err := reader.readDocument(ctx)
 	result := api.XrayOverviewResponse{Status: statusProjection(reader.Runtime(), doc, err)}
+	if reconcileErr != nil && result.Status.ConfigDrift {
+		_, result.Status.ConfigError, _ = transaction.ErrorInfo(reconcileErr)
+	}
 	if err != nil {
 		return result
 	}

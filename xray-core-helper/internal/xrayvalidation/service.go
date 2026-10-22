@@ -10,6 +10,7 @@ import (
 
 	"home-router/xray-core-helper/internal/bootstrap"
 	"home-router/xray-core-helper/internal/commandrunner"
+	"home-router/xray-core-helper/internal/nativebinding"
 )
 
 const commandTimeout = 2 * time.Minute
@@ -18,6 +19,7 @@ type Code string
 
 const (
 	CodeInvalidConfig    Code = "invalid_config"
+	CodeMarkupInvalid    Code = "config_markup_invalid"
 	CodeCanceled         Code = "canceled"
 	CodeTimedOut         Code = "timed_out"
 	CodeValidationFailed Code = "validation_failed"
@@ -99,6 +101,9 @@ func (service *Service) Validate(ctx context.Context) (Result, error) {
 		return Result{}, contextFailure(err)
 	}
 
+	if _, err := nativebinding.ParseFile(service.config); err != nil {
+		return Result{}, &Error{Code: CodeMarkupInvalid}
+	}
 	args := []string{"run", "-test", "-config", service.config}
 	if err := service.runner.Run(ctx, service.binary, args); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

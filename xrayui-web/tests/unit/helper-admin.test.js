@@ -82,3 +82,15 @@ test('geodata settings preserve explicit empty origins and never submit an execu
   assert.equal(Object.hasOwn(payload.settings, 'builder'), false);
   assert.equal(payload.expectedGeneration, 42);
 });
+
+test('config rollback submits only its expected generation with a long operation timeout', async()=>{
+ const calls=[];
+ const service=createHelperAdminService({helperClient:{request:async(...args)=>{calls.push(args);return{available:true,generation:5};}}});
+ assert.equal((await service.getConfigRollback()).generation,5);
+ await service.rollbackConfiguration(5);
+ assert.deepEqual(calls[0],['GET','/v1/xray/config/rollback']);
+ assert.equal(calls[1][0],'POST');
+ assert.equal(calls[1][1],'/v1/xray/config/rollback');
+ assert.deepEqual(calls[1][2].body,{expectedGeneration:5});
+ assert.equal(calls[1][2].timeoutMs,LONG_OPERATION_TIMEOUT_MS);
+});

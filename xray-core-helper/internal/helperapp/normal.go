@@ -176,7 +176,7 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 		Config:   config.Xray.Config,
 		API:      config.Xray.API,
 		AssetDir: config.Xray.AssetDir,
-	}, store)
+	}, store).WithDriftReconciler(engine.ReconcileDrift)
 	domainsStore, err := domainstore.Open(ctx, config.Storage.Database)
 	if err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 		Validation: validationService, Diagnostics: diagnosticsService,
 		Connectivity: routerdiagnostics.NewConnectivity(readinessHealth.VerifyActive, reader.OutboundEndpoint),
 		Services:     serviceController, Logs: logReadService, Errors: errorHistory,
-		Logging: logMutationService, Readiness: readinessService, Templates: templateProjection, Settings: settingsService, Backups: backupStore, AcceptSystem: acceptSystemEngine, ApplyTemplate: safeApplyService,
+		ConfigRollback: engine, Logging: logMutationService, Readiness: readinessService, Templates: templateProjection, Settings: settingsService, Backups: backupStore, AcceptSystem: acceptSystemEngine, ApplyTemplate: safeApplyService,
 	})
 	server.Handler = xrayservice.Guard(server.Handler, a.installation, xrayservice.New().Resolve, func(r *http.Request) bool {
 		return httpapi.IndependentNativeOperation(r, safeApplyStore.Transaction)

@@ -27,6 +27,7 @@ const MaxRequestBodyBytes = 1 << 20
 const longOperationWriteTimeout = 20 * time.Minute
 
 type ServerServices struct {
+	ConfigRollback  ConfigRollbackService
 	DomainReconcile DomainReconcileService
 	NetworkProbe    NetworkProbeService
 	Web             *api.WebSettingsResponse
@@ -81,6 +82,11 @@ type LoggingMutationService interface {
 
 func NewServer(version string, reader xrayconfig.Reader, adopter ConfigService, domains ProxyDomainService, dependencies ...ServerServices) *http.Server {
 	mux := http.NewServeMux()
+	var rollback ConfigRollbackService
+	if len(dependencies) > 0 {
+		rollback = dependencies[0].ConfigRollback
+	}
+	registerConfigRollback(mux, rollback)
 	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeError(w, &fault.Error{

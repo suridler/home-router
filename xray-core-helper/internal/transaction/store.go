@@ -29,6 +29,7 @@ type Pending struct {
 	Phase              string
 	PreviousGeneration uint64
 	PreviousHash       string
+	PreviousStateHash  string
 	NextHash           string
 	CandidatePath      string
 	BackupPath         string
@@ -64,18 +65,28 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 }
 
 func (store *Store) createSchema(ctx context.Context) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var version int
-	if err := store.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read transaction schema version: %w", err)
 	}
-	if version > 1 {
-		return fmt.Errorf("transaction database schema version %d is newer than supported version 1", version)
+	if version > 2 {
+		return fmt.Errorf("transaction database schema version %d is newer than supported version 2", version)
 	}
 	for _, statement := range []string{
 		`CREATE TABLE IF NOT EXISTS config_state (
 			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 			generation INTEGER NOT NULL CHECK (generation >= 0),
 			content_hash TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS config_rollback (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			current_hash TEXT NOT NULL,
+			previous_hash TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS config_transaction (
 			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -89,16 +100,19 @@ func (store *Store) createSchema(ctx context.Context) error {
 			restart_required INTEGER NOT NULL CHECK (restart_required IN (0, 1))
 		)`,
 	} {
-		if _, err := store.db.ExecContext(ctx, statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("create transaction schema: %w", err)
 		}
 	}
-	if version == 0 {
-		if _, err := store.db.ExecContext(ctx, "PRAGMA user_version = 1"); err != nil {
+	if version < 2 {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE config_transaction ADD COLUMN previous_state_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("extend config journal: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 2"); err != nil {
 			return fmt.Errorf("set transaction schema version: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (store *Store) Close() error { return store.db.Close() }
@@ -153,7 +167,7 @@ func (store *Store) SavePending(ctx context.Context, pending Pending) error {
 	if metadata.Generation != pending.PreviousGeneration {
 		return ErrStaleGeneration
 	}
-	if metadata.ContentHash != pending.PreviousHash {
+	if metadata.ContentHash != pending.stateHash() {
 		return ErrStateDrift
 	}
 	if pending.PreviousGeneration >= math.MaxInt64 {
@@ -168,10 +182,10 @@ func (store *Store) SavePending(ctx context.Context, pending Pending) error {
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO config_transaction(
 		singleton, transaction_id, phase, previous_generation, previous_hash, next_hash,
-		candidate_path, backup_path, restart_required
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`, pending.ID, pending.Phase, pending.PreviousGeneration,
+		candidate_path, backup_path, restart_required, previous_state_hash
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, pending.ID, pending.Phase, pending.PreviousGeneration,
 		pending.PreviousHash, pending.NextHash, pending.CandidatePath, pending.BackupPath,
-		boolInt(pending.RestartRequired)); err != nil {
+		boolInt(pending.RestartRequired), pending.PreviousStateHash); err != nil {
 		return fmt.Errorf("write transaction journal: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -184,10 +198,10 @@ func (store *Store) Pending(ctx context.Context) (*Pending, error) {
 	var pending Pending
 	var restartRequired int
 	err := store.db.QueryRowContext(ctx, `SELECT transaction_id, phase, previous_generation,
-		previous_hash, next_hash, candidate_path, backup_path, restart_required
+		previous_hash, next_hash, candidate_path, backup_path, restart_required, previous_state_hash
 		FROM config_transaction WHERE singleton = 1`).Scan(
 		&pending.ID, &pending.Phase, &pending.PreviousGeneration, &pending.PreviousHash,
-		&pending.NextHash, &pending.CandidatePath, &pending.BackupPath, &restartRequired,
+		&pending.NextHash, &pending.CandidatePath, &pending.BackupPath, &restartRequired, &pending.PreviousStateHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -240,7 +254,7 @@ func (store *Store) CommitPending(ctx context.Context, id string) (Metadata, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE config_state SET generation = ?, content_hash = ?
 		WHERE singleton = 1 AND generation = ? AND content_hash = ?`,
-		pending.PreviousGeneration+1, pending.NextHash, pending.PreviousGeneration, pending.PreviousHash)
+		pending.PreviousGeneration+1, pending.NextHash, pending.PreviousGeneration, pending.stateHash())
 	if err != nil {
 		return Metadata{}, fmt.Errorf("commit configuration generation: %w", err)
 	}
@@ -250,6 +264,9 @@ func (store *Store) CommitPending(ctx context.Context, id string) (Metadata, err
 	}
 	if rows != 1 {
 		return Metadata{}, ErrStateDrift
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO config_rollback(singleton,current_hash,previous_hash) VALUES(1,?,?)", pending.NextHash, pending.rollbackHash()); err != nil {
+		return Metadata{}, err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM config_transaction WHERE singleton = 1 AND transaction_id = ?", id); err != nil {
 		return Metadata{}, fmt.Errorf("clear committed transaction journal: %w", err)
@@ -276,6 +293,10 @@ func (store *Store) ClearPending(ctx context.Context, id string) error {
 }
 
 func (store *Store) Adopt(ctx context.Context, expectedGeneration uint64, contentHash string) (Metadata, error) {
+	return store.adopt(ctx, expectedGeneration, contentHash, "")
+}
+
+func (store *Store) adopt(ctx context.Context, expectedGeneration uint64, contentHash, previousHash string) (Metadata, error) {
 	if expectedGeneration >= math.MaxInt64 {
 		return Metadata{}, ErrStaleGeneration
 	}
@@ -302,6 +323,9 @@ func (store *Store) Adopt(ctx context.Context, expectedGeneration uint64, conten
 	}
 	if rows != 1 {
 		return Metadata{}, ErrStaleGeneration
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO config_rollback(singleton,current_hash,previous_hash) VALUES(1,?,?)", contentHash, previousHash); err != nil {
+		return Metadata{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Metadata{}, fmt.Errorf("commit configuration adopt: %w", err)
@@ -330,10 +354,10 @@ func readPending(ctx context.Context, queryer querier) (Pending, error) {
 	var pending Pending
 	var restartRequired int
 	err := queryer.QueryRowContext(ctx, `SELECT transaction_id, phase, previous_generation,
-		previous_hash, next_hash, candidate_path, backup_path, restart_required
+		previous_hash, next_hash, candidate_path, backup_path, restart_required, previous_state_hash
 		FROM config_transaction WHERE singleton = 1`).Scan(
 		&pending.ID, &pending.Phase, &pending.PreviousGeneration, &pending.PreviousHash,
-		&pending.NextHash, &pending.CandidatePath, &pending.BackupPath, &restartRequired,
+		&pending.NextHash, &pending.CandidatePath, &pending.BackupPath, &restartRequired, &pending.PreviousStateHash,
 	)
 	pending.RestartRequired = restartRequired != 0
 	return pending, err
@@ -344,4 +368,29 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+// RollbackHash is tied to the current committed content, including after an
+// older executable updates config_state without maintaining rollback metadata.
+func (store *Store) RollbackHash(ctx context.Context, currentHash string) (string, error) {
+	var previous string
+	err := store.db.QueryRowContext(ctx, "SELECT previous_hash FROM config_rollback WHERE singleton=1 AND current_hash=?", currentHash).Scan(&previous)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return previous, err
+}
+
+// Older pending journals use the pre-change file as their committed baseline.
+func (pending Pending) stateHash() string {
+	if pending.PreviousStateHash != "" {
+		return pending.PreviousStateHash
+	}
+	return pending.PreviousHash
+}
+func (pending Pending) rollbackHash() string {
+	if pending.stateHash() != pending.PreviousHash {
+		return ""
+	}
+	return pending.PreviousHash
 }

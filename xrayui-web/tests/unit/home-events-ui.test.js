@@ -167,8 +167,11 @@ test('full log viewer requests the helper-supported limit of 200 lines', async (
   app.selectedLogKind = 'access';
   await app.loadLogs();
 
-  assert.deepEqual(calls, ['/api/logs/error?limit=200', '/api/logs/access?limit=200']);
-  assert.deepEqual(app.logs, ['log line']);
+  app.selectedLogKind = 'helper';
+  await app.loadLogs();
+  assert.deepEqual(calls, ['/api/logs/error?limit=200', '/api/logs/access?limit=200', '/api/logs/helper?limit=200']);
+  assert.match(HTML_SOURCE, /selectedLogKind === 'helper'/);
+  assert.deepEqual(Array.from(app.logs), ['log line']);
 });
 
 test('homepage events use text-only rendering and position-stable keys', () => {
@@ -225,4 +228,62 @@ test('combined journal defaults to durable errors and fetches live events only w
   await app.selectHomeEventFilter('invalid');assert.equal(app.homeEventFilter,'error');
   assert.equal((HTML_SOURCE.match(/aria-labelledby="home-events-title"/g)||[]).length,1);
   assert.doesNotMatch(HTML_SOURCE,/aria-labelledby="error-history-title"/);
+});
+
+
+test('full logs show newest first without mutating the API response', async () => {
+  const app = appFixture();
+  const lines = ['old', 'middle', 'new'];
+  app.api = async () => ({ lines });
+  for (const kind of ['error', 'access', 'helper']) {
+    app.selectedLogKind = kind;
+    await app.loadLogs();
+    assert.deepEqual(Array.from(app.logs), ['new', 'middle', 'old']);
+  }
+  assert.deepEqual(lines, ['old', 'middle', 'new']);
+});
+
+test('automatic log refresh only polls an enabled visible log view and never overlaps', async () => {
+  const page = { hidden: false };
+  const app = appFixture({ document: page });
+  let calls = 0;
+  let resolve;
+  app.api = async () => { calls++; return new Promise(done => { resolve = done; }); };
+  app.activeView = 'logs';
+  await app.refreshLogs();
+  assert.equal(calls, 0);
+  app.logAutoRefresh = true;
+  app.activeView = 'status';
+  await app.refreshLogs();
+  assert.equal(calls, 0);
+  app.activeView = 'logs';
+  app.setupMode = true;
+  await app.refreshLogs();
+  assert.equal(calls, 0);
+  app.setupMode = false;
+  const poll = app.refreshLogs();
+  await app.refreshLogs();
+  assert.equal(calls, 1);
+  resolve({ lines: ['event'] });
+  await poll;
+  const hiddenApp = appFixture({ document: { hidden: true } });
+  hiddenApp.logAutoRefresh = true;
+  hiddenApp.activeView = 'logs';
+  hiddenApp.api = () => assert.fail('hidden tab polled logs');
+  await hiddenApp.refreshLogs();
+});
+
+test('initialization schedules log refresh every ten seconds', async () => {
+  const intervals = [];
+  const app = appFixture({ window: { setInterval: (fn, ms) => { intervals.push({fn, ms}); return 0; } } });
+  for (const name of ['syncNavigation', 'startUpdatePolling', 'loadUpdateStatus', 'loadSetup', 'loadStatus', 'loadLogs', 'loadGeodata', 'loadProxyDomains', 'loadTemplates', 'loadSystemSettings', 'loadSafeApply', 'refreshHomeEvents', 'loadNetworkProbes', 'loadConfigRollback']) app[name] = async () => false;
+  app.updateInitialCheckStarted = true;
+  let refreshed = 0;
+  app.refreshLogs = () => { refreshed++; };
+  await app.init();
+  const poll = intervals.find(item => item.ms === 10000);
+  assert.ok(poll);
+  poll.fn();
+  assert.equal(refreshed, 1);
+  assert.match(HTML_SOURCE, /x-model="logAutoRefresh"/);
 });

@@ -99,6 +99,54 @@ test('saved logging with failed restart is shown as persisted and refreshes stat
   assert.equal(app.pendingAction,'');
 });
 
-test('all settings subviews have stable URLs across reload and history',()=>{
-  const app=fixture();for(const tab of ['logs','system']){app.navigateSettings(tab);assert.equal(app.activeSettingsTab,tab);assert.equal(app.viewFromHash(),'settings');app.activeSettingsTab='outbounds';assert.equal(app.viewFromHash(),'settings');assert.equal(app.activeSettingsTab,tab);}
+test('logging and helper settings are separate pages and survive route re-reading',()=>{
+  const app=fixture();
+  for(const [choice,view] of [['logs','logging'],['system','settings']]){
+    app.navigateSettings(choice);
+    assert.equal(app.activeView,view);
+    assert.equal(app.viewFromHash(),view);
+    assert.equal(app.maintenanceOpen,true);
+    app.activeView='status';
+    app.syncNavigation();
+    assert.equal(app.activeView,view);
+  }
+});
+
+test('daily navigation groups maintenance separately and preserves existing deep links',()=>{
+  const app=fixture();
+  assert.deepEqual(Array.from(app.navigationGroups[0].items,item=>item[0]),['status','routing','outbounds','logs']);
+  for(const item of app.maintenanceItems){
+    app.navigate(item[0]);
+    assert.equal(app.viewFromHash(),item[0]);
+    assert.equal(app.isMaintenanceView(),true);
+    assert.equal(app.navIsActive('maintenance'),true);
+    assert.equal(app.viewTitle(),item[1]);
+  }
+  app.activeView='status';
+  assert.equal(app.isMaintenanceView(),false);
+  assert.equal(app.navIsActive('status'),true);
+  assert.equal(app.navIsActive('maintenance'),false);
+});
+
+test('config rollback requires operator confirmation and uses the displayed generation',async()=>{
+  const app=fixture();app.configRollback={available:true,generation:12};
+  let request;
+  app.api=async(path,options)=>{request={path,options};return{};};
+  app.loadStatus=async()=>{};app.loadConfigRollback=async()=>{};
+  await app.rollbackConfiguration();
+  assert.equal(request.path,'/api/xray/config/rollback');
+  assert.equal(JSON.parse(request.options.body).expectedGeneration,12);
+  assert.match(app.configRollbackMessage,/восстановлена/);
+  assert.equal(app.pendingAction,'');
+  const cancelled=fixture(()=>false);cancelled.configRollback={available:true,generation:12};
+  cancelled.api=()=>assert.fail('cancelled rollback sent a request');
+  await cancelled.rollbackConfiguration();
+});
+
+test('config rollback preserves the error and releases its pending state',async()=>{
+  const app=fixture();app.configRollback={available:true,generation:12};
+  app.api=async()=>{throw Error('validation failed');};
+  await app.rollbackConfiguration();
+  assert.equal(app.configRollbackMessage,'validation failed');
+  assert.equal(app.pendingAction,'');
 });

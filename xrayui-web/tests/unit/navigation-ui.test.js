@@ -14,20 +14,23 @@ function fixture(hash = '') {
 }
 test('direct navigation and reloading select the correct settings section', () => {
   const app = fixture();
-  for (const [view, tab] of [['outbounds', 'outbounds'], ['geodata', 'geodata'], ['templates', 'templates'], ['settings', 'system']]) {
+  for (const view of ['outbounds', 'geodata', 'templates', 'settings', 'logging', 'updates']) {
     app.navigationOpen = true;
     app.navigate(view);
     assert.equal(app.activeView, view);
-    assert.equal(app.activeSettingsTab, tab);
     assert.equal(app.navigationOpen, false);
     assert.ok(app.viewTitle());
     assert.equal(fixture('#' + view).viewFromHash(), view);
   }
   assert.equal(fixture('#unknown').viewFromHash(), 'status');
+  assert.equal(fixture('#settings/logs').viewFromHash(), 'logging');
+  assert.equal(fixture('#settings/system').viewFromHash(), 'settings');
+  assert.equal(fixture('#maintenance').viewFromHash(), 'network');
+  assert.equal(fixture('#xray').viewFromHash(), 'network');
 });
 test('component cards open their actual administration section', () => {
   const app = fixture();
-  for (const [component, view] of [['helper', 'settings'], ['system', 'network'], ['geodata', 'geodata'], ['xray', 'xray']]) {
+  for (const [component, view] of [['helper', 'settings'], ['system', 'network'], ['geodata', 'geodata'], ['xray', 'network']]) {
     app.openComponent(component);
     assert.equal(app.activeView, view);
   }

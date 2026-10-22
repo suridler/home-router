@@ -37,6 +37,7 @@ function helperPayload(pathname) {
     '/v1/xray/geodata/settings': { generation: 2, settings: { origins: [], geosite: { url: '', checksum: { url: '', algorithm: 'sha256' } }, geoip: { url: '', checksum: { url: '', algorithm: 'sha256' } } } },
     '/v1/xray/geodata/update/status': { settings: { generation: 2, settings: {} }, recovery: { phase: 'none', code: 'recovery_clear', mutationsBlocked: false } },
     '/v1/errors': { errors: [{ id: 9, time: '2026-10-18T12:00:00Z', source: 'journal', message: '[Error] retained' }], capacity: 100, collectedAt: '2026-10-18T12:00:01Z' },
+    '/v1/logs/helper': { kind: 'helper', source: 'journal', lines: ['helper event'] },
     '/v1/logs/error': { kind: 'error', source: 'journal', lines: ['sanitized helper line'], bytesRead: 21, byteLimit: 1048576, lineLimit: 3, truncated: false }
   };
   if (path === '/v1/xray/overview') return {
@@ -87,6 +88,11 @@ test('read-only web APIs use the fake helper when host config paths are unreadab
   const logsResponse = await fetch(`${web.baseURL}/api/logs/error?limit=200`);
   assert.equal(logsResponse.status, 200);
   assert.deepEqual((await logsResponse.json()).lines, ['sanitized helper line']);
+
+  const helperLogsResponse = await fetch(`${web.baseURL}/api/logs/helper?limit=200`);
+  assert.equal(helperLogsResponse.status, 200);
+  assert.deepEqual((await helperLogsResponse.json()).lines, ['helper event']);
+  assert.ok(calls.includes('/v1/logs/helper?limit=200'));
 
   const geodataResponse = await fetch(`${web.baseURL}/api/settings/geodata`);
   assert.equal(geodataResponse.status, 200);

@@ -97,7 +97,7 @@ func registerOperations(
 		http.MethodGet: func(w http.ResponseWriter, r *http.Request) {
 			kind, ok := logKind(r.PathValue("kind"))
 			if !ok {
-				writeAPIError(w, http.StatusBadRequest, "invalid_kind", "log kind must be access or error")
+				writeAPIError(w, http.StatusBadRequest, "invalid_kind", "log kind must be access, error or helper")
 				return
 			}
 			limit, ok := logLimit(r)
@@ -184,6 +184,8 @@ func logKind(value string) (logreader.Kind, bool) {
 		return logreader.Access, true
 	case string(logreader.ErrorLog):
 		return logreader.ErrorLog, true
+	case string(logreader.Helper):
+		return logreader.Helper, true
 	default:
 		return "", false
 	}
@@ -206,6 +208,10 @@ func writeValidationError(w http.ResponseWriter, err error) {
 	var failure *xrayvalidation.Error
 	if !errors.As(err, &failure) {
 		writeAPIError(w, http.StatusServiceUnavailable, "validation_unavailable", "Xray validation is unavailable")
+		return
+	}
+	if failure.Code == xrayvalidation.CodeMarkupInvalid {
+		writeAPIError(w, http.StatusUnprocessableEntity, string(failure.Code), "Xray configuration helper annotations are invalid")
 		return
 	}
 	status := http.StatusServiceUnavailable

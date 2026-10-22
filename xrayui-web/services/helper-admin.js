@@ -93,6 +93,9 @@ function createHelperAdminService({ helperClient }) {
   const addProxyDomain = domain => domainMutation('POST', '/v1/proxy-domains', domain);
   const deleteProxyDomain = domain => domainMutation('DELETE', `/v1/proxy-domains/${encodeURIComponent(domain)}`, domain);
 
+  const getConfigRollback = () => helperClient.request('GET', '/v1/xray/config/rollback');
+  const rollbackConfiguration = expectedGeneration => request('POST', '/v1/xray/config/rollback', { expectedGeneration }, { timeoutMs: LONG_OPERATION_TIMEOUT_MS });
+
   async function validateConfiguration() {
     return request('POST', '/v1/xray/config/validate', {}, { timeoutMs: LONG_OPERATION_TIMEOUT_MS });
   }
@@ -156,7 +159,7 @@ function createHelperAdminService({ helperClient }) {
   const getSafeApply = () => helperClient.request("GET", "/v1/safe-apply");
   const resolveSafeApply = (transactionId, action) => request("POST", "/v1/safe-apply/" + encodeURIComponent(transactionId) + "/" + action, {});
 
-  return { getTemplateBackups, acceptSystemSettings, applyTemplateSettings, getSafeApply, resolveSafeApply, getSystemSettings, updateSystemSettings, getTemplateStatus, refreshTemplateStatus, addProxyDomain, controlService, deleteProxyDomain, getProxyDomains, saveGeodataSettings, updateGeodata, updateLogSettings, validateConfiguration };
+  return { getConfigRollback, rollbackConfiguration, getTemplateBackups, acceptSystemSettings, applyTemplateSettings, getSafeApply, resolveSafeApply, getSystemSettings, updateSystemSettings, getTemplateStatus, refreshTemplateStatus, addProxyDomain, controlService, deleteProxyDomain, getProxyDomains, saveGeodataSettings, updateGeodata, updateLogSettings, validateConfiguration };
 }
 
 module.exports = { createHelperAdminService };

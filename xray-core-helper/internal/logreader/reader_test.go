@@ -642,3 +642,25 @@ func (file *cancelingFile) ReadAt(buffer []byte, offset int64) (int, error) {
 	file.cancel()
 	return n, err
 }
+
+func TestHelperJournalDoesNotDependOnXrayConfiguration(t *testing.T) {
+	fake := &fakeJournalRunner{output: []byte("first\nlast\n")}
+	reader := New(nil)
+	reader.journalRunner = fake
+	result, err := reader.Read(context.Background(), Helper, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-u", "xray-core-helper.service", "-n", "2", "--no-pager", "-o", "short-iso"}
+	if fmt.Sprint(fake.args) != fmt.Sprint(want) || fake.executable != journalctlPath {
+		t.Fatalf("unexpected command: %s %v", fake.executable, fake.args)
+	}
+	if result.Kind != Helper || result.Source != SourceJournal || fmt.Sprint(result.Lines) != "[first last]" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	_, err = reader.Read(context.Background(), Helper, MaxLines+1)
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Code != ErrorInvalidLimit || fake.calls != 1 {
+		t.Fatalf("invalid limit reached journal: %v, calls=%d", err, fake.calls)
+	}
+}

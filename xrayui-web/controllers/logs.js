@@ -1,8 +1,8 @@
 function createLogsController({ readLog }) {
   return {
     list: async (req, res) => {
-      if (!['access', 'error'].includes(req.params.kind)) {
-        res.status(400).json({ ok: false, message: 'kind must be access or error' });
+      if (!['access', 'error', 'helper'].includes(req.params.kind)) {
+        res.status(400).json({ ok: false, message: 'kind must be access, error or helper' });
         return;
       }
       const requested = Number.parseInt(req.query.limit, 10);

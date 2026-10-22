@@ -3,6 +3,8 @@ package xrayconfig
 import (
 	"fmt"
 	"home-router/xray-core-helper/internal/bootstrap"
+	"home-router/xray-core-helper/internal/nativebinding"
+	"strconv"
 
 	"home-router/xray-core-helper/internal/api"
 	"home-router/xray-core-helper/internal/transaction"
@@ -114,6 +116,26 @@ func PlanLogConfigurationValues(request api.LogConfigurationRequest, values boot
 			{name: "dnsLog", value: dnsLog},
 		}
 		work := newSession(source)
+		document, err := nativebinding.Parse(source)
+		if err != nil {
+			return nil, transaction.Reject("config_markup_invalid", "Xray configuration helper annotations are invalid", 422)
+		}
+		values := map[string]string{
+			"helper.logging.access-path": resolved.AccessPath,
+			"helper.logging.error-path":  resolved.ErrorPath,
+			"helper.logging.level":       request.Loglevel,
+			"helper.logging.dns-log":     strconv.FormatBool(dnsLog),
+		}
+		work.current, err = document.RenderSelected(func(provider string) (string, error) {
+			value, ok := values[provider]
+			if !ok {
+				return "", nativebinding.ErrUnresolved
+			}
+			return value, nil
+		}, func(binding nativebinding.Binding) bool { _, ok := values[binding.Source]; return ok })
+		if err != nil {
+			return nil, transaction.Reject("config_markup_invalid", "Xray configuration helper annotations cannot be updated", 422)
+		}
 		for _, setting := range desired {
 			err := work.apply(func(step *editor) ([]transaction.ByteEdit, error) {
 				object, err := logConfigurationObject(step.syntax)

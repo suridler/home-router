@@ -57,7 +57,9 @@ implementation before changing a public contract.
   and argument vector. Never invoke a shell.
 - Allowlist service names, actions, managed paths and remote origins.
 - Configuration mutations require the appropriate expected generation, are
-  serialized, and fail closed on unrecognized external config drift. Follow
+  serialized. State observations validate external config drift (helper annotations
+  and Xray) before automatic adoption. Failed validation blocks ordinary writes;
+  explicit config rollback remains available. Follow
   each API contract; setup/probe/service actions do not all share this field.
 - Preserve JSONC comments and unknown fields with narrow edits. Never rebuild
   the complete document for a small mutation.

@@ -522,6 +522,9 @@ func TestXrayValidatorUsesConfiguredAssetDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := os.WriteFile(resultPath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	validator, err := NewXrayValidator(binaryPath, assetDir)
 	if err != nil {
 		t.Fatal(err)

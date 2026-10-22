@@ -1,4 +1,4 @@
-// Package logreader provides bounded, read-only access to configured Xray logs.
+// Package logreader provides bounded, read-only access to Xray logs and the helper journal.
 package logreader
 
 import (
@@ -34,6 +34,7 @@ type Kind string
 const (
 	Access   Kind = "access"
 	ErrorLog Kind = "error"
+	Helper   Kind = "helper"
 )
 
 type Source string
@@ -131,7 +132,7 @@ func (reader *Reader) read(ctx context.Context, kind Kind, lineLimit int, histor
 	if ctx == nil {
 		return Result{}, &Error{Code: ErrorNilContext}
 	}
-	if kind != Access && kind != ErrorLog {
+	if kind != Access && kind != ErrorLog && kind != Helper {
 		return Result{}, &Error{Code: ErrorInvalidKind}
 	}
 	if lineLimit < 1 || lineLimit > MaxLines && !history {
@@ -139,6 +140,9 @@ func (reader *Reader) read(ctx context.Context, kind Kind, lineLimit int, histor
 	}
 	if err := contextFailure(ctx.Err()); err != nil {
 		return Result{}, err
+	}
+	if reader != nil && kind == Helper {
+		return reader.readJournal(ctx, kind, lineLimit)
 	}
 	if reader == nil || reader.provider == nil || reader.opener == nil {
 		return Result{}, &Error{Code: ErrorPathUnavailable}
@@ -238,7 +242,11 @@ func (reader *Reader) readJournal(ctx context.Context, kind Kind, lineLimit int)
 		runner = boundedJournalRunner{runner: boundedRunner}
 	}
 
-	args := []string{"-u", xrayUnit, "-n", strconv.Itoa(lineLimit), "--no-pager", "-o", "short-iso"}
+	unit := xrayUnit
+	if kind == Helper {
+		unit = "xray-core-helper.service"
+	}
+	args := []string{"-u", unit, "-n", strconv.Itoa(lineLimit), "--no-pager", "-o", "short-iso"}
 	output, err := runner.Run(ctx, journalctlPath, args)
 	if contextErr := contextFailure(ctx.Err()); contextErr != nil {
 		return Result{}, contextErr

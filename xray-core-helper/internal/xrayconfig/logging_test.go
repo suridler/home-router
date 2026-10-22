@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"home-router/xray-core-helper/internal/api"
+	"home-router/xray-core-helper/internal/nativebinding"
 	"home-router/xray-core-helper/internal/transaction"
 )
 
@@ -224,4 +225,25 @@ func TestValidateLogConfigurationRequestRedactsStableErrors(t *testing.T) {
 
 func testPlanLogConfiguration(request api.LogConfigurationRequest) transaction.Planner {
 	return PlanLogConfiguration(request, testconfig.Defaults().Logging)
+}
+
+func TestLogMutationKeepsAnnotationLocatorsValid(t *testing.T) {
+	source := []byte("{\n\"log\": {\n// helper:v1 bind level type=log-level source=helper.logging.level token=\"\\\"warning\\\"\"\n\"loglevel\": \"warning\",\n\"access\":\"none\",\"error\":\"\",\"dnsLog\":false\n}}")
+	dns := false
+	request := api.LogConfigurationRequest{Access: api.LogTarget{Mode: api.LogTargetDisabled}, Error: api.LogTarget{Mode: api.LogTargetJournal}, Loglevel: "debug", DNSLog: &dns}
+	edits, err := PlanLogConfigurationValues(request, testconfig.Defaults().Logging)(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := transaction.ApplyEdits(source, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := nativebinding.Parse(candidate)
+	if err != nil {
+		t.Fatalf("edited annotation invalid: %v", err)
+	}
+	if err := doc.Check(func(string) (string, error) { return "debug", nil }); err != nil {
+		t.Fatal(err)
+	}
 }

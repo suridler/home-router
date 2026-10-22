@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"home-router/xray-core-helper/internal/testconfig"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +33,9 @@ func (runner *fakeRunner) Run(_ context.Context, executable string, args []strin
 func TestValidateRunsExactConfiguredActiveConfigCommand(t *testing.T) {
 	config := testconfig.Defaults()
 	config.Xray.Config = t.TempDir() + "/active.jsonc"
+	if err := os.WriteFile(config.Xray.Config, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	runner := &fakeRunner{}
 	service, err := New(config, runner)
 	if err != nil {
@@ -86,6 +90,9 @@ func TestValidateMapsFailuresToRedactedTypedErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			config := testconfig.Defaults()
 			config.Xray.Config = t.TempDir() + "/active-secret.jsonc"
+			if err := os.WriteFile(config.Xray.Config, []byte("{}"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			runner := &fakeRunner{err: test.err}
 			service, err := New(config, runner)
 			if err != nil {
@@ -179,5 +186,23 @@ func TestNewRejectsInvalidConfiguredPaths(t *testing.T) {
 				t.Fatal("New() succeeded with invalid configured paths")
 			}
 		})
+	}
+}
+
+func TestValidateRejectsMalformedHelperMarkupBeforeXray(t *testing.T) {
+	config := testconfig.Defaults()
+	config.Xray.Config = t.TempDir() + "/config.json"
+	if err := os.WriteFile(config.Xray.Config, []byte("{\n// helper:v1 invalid binding\n}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	service, err := New(config, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Validate(context.Background())
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Code != CodeMarkupInvalid || len(runner.calls) != 0 {
+		t.Fatalf("failure=%v calls=%d", err, len(runner.calls))
 	}
 }

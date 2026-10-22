@@ -19,6 +19,11 @@ function registerXrayRoutes(app, backend) {
     });
     res.json(result);
   }));
+  router.get('/api/xray/config/rollback', asyncHandler(async (_req, res) => res.json(await backend.getConfigRollback())));
+  router.post('/api/xray/config/rollback', asyncHandler(async (req, res) => {
+    if (!backend.controlEnabled) return res.status(503).json({ ok: false, code: 'control_disabled', message: 'Управление отключено в настройках helper' });
+    res.json(await backend.rollbackConfiguration(req.body?.expectedGeneration));
+  }));
   router.post('/api/xray/config-test', asyncHandler(controller.testConfig));
   router.post('/api/xray/:action', asyncHandler(controller.action));
   router.post('/api/restart-xray', asyncHandler(controller.restart));

@@ -136,3 +136,47 @@ func openTestStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
+
+func TestStoreUpgradesV1WithPendingJournal(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Initialize(ctx, "original"); err != nil {
+		t.Fatal(err)
+	}
+	pending := Pending{ID: "legacy", Phase: "staged", PreviousHash: "original", NextHash: "next", CandidatePath: "candidate", BackupPath: "backup"}
+	if err := store.SavePending(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"ALTER TABLE config_transaction DROP COLUMN previous_state_hash",
+		"DROP TABLE config_rollback",
+		"PRAGMA user_version = 1",
+	} {
+		if _, err := store.db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upgraded.Close()
+	got, err := upgraded.Pending(ctx)
+	if err != nil || got == nil || *got != pending {
+		t.Fatalf("pending=%#v err=%v", got, err)
+	}
+	if got.stateHash() != "original" {
+		t.Fatal("lost committed baseline of legacy journal")
+	}
+	var version int
+	if err := upgraded.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+		t.Fatalf("version=%d err=%v", version, err)
+	}
+}

@@ -1,7 +1,7 @@
 document.addEventListener('alpine:init', () => {
   Alpine.data('routerApp', () => ({
-    activeView: 'status', activeSettingsTab: 'logs', selectedLogKind: 'error',
-    status: null, geodata: null, templates: [], logs: [], trafficSamples: [], logMessage: '', geodataMessage: '', templateMessage: '', settingsMessage: '', configTestMessage: '', requestError: '', requestErrorSource: '',
+    activeView: 'status', selectedLogKind: 'error', loadedLogKind: '', logAutoRefresh: false,
+    configRollback: null, configRollbackMessage: '', status: null, geodata: null, templates: [], logs: [], trafficSamples: [], logMessage: '', geodataMessage: '', templateMessage: '', settingsMessage: '', configTestMessage: '', requestError: '', requestErrorSource: '',
     homeEventLines: [], homeEventFilter: 'error', homeEventLoading: false, homeEventError: '', homeEventUpdatedAt: null, homeEventStale: false,
     proxyDomains: null, proxyDomainInput: '', proxyDomainMessage: '', proxyDomainLoading: false, proxyDomainPendingName: '',
     proxyDomainsStale: false, proxyDomainsUpdatedAt: null, proxyDomainRevision: 0,
@@ -37,16 +37,24 @@ document.addEventListener('alpine:init', () => {
     routingMessage: '',
     routingMenuIndex: null,
 
-    navigationOpen: false,
+    navigationOpen: false, maintenanceOpen: false,
     navigationGroups: [
-      { label: 'Обзор', items: [['status', 'Главная', '◉'], ['network', 'Сеть и TProxy', '⇄']] },
-      { label: 'Трафик', items: [['outbounds', 'Прокси-серверы', '↗'], ['routing', 'Маршрутизация', '⑂'], ['geodata', 'Геоданные', '◎']] },
-      { label: 'Управление', items: [['xray', 'Сервис Xray', '▣'], ['templates', 'Системные шаблоны', '▤'], ['logs', 'Журналы', '≡'], ['settings', 'Настройки', '⚙']] }
+      { label: 'Роутер', items: [['status', 'Обзор', '◉'], ['routing', 'Ресурсы для прокси', '↪'], ['outbounds', 'Подключения', '↗'], ['logs', 'Журнал', '≡']] },
+      { label: 'Система', items: [['maintenance', 'Обслуживание', '⚙']] }
     ],
-    sectionTabs: { outbounds: 'outbounds', geodata: 'geodata', templates: 'templates' },
-    viewTitle() { return this.navigationGroups.flatMap(group => group.items).find(item => item[0] === this.activeView)?.[1] || 'Главная'; },
+    maintenanceItems: [
+      ['network', 'Работа роутера', 'Состояние, проверка интернета и управление Xray.'],
+      ['geodata', 'Геобазы', 'Источники, расписание и результат обновления.'],
+      ['templates', 'Конфигурации', 'Сравнение шаблонов и системных файлов.'],
+      ['updates', 'Обновление системы', 'Версия комплекта, установка и восстановление.'],
+      ['logging', 'Журналирование', 'Уровень, назначение журналов и ротация.'],
+      ['settings', 'Настройки helper', 'Общие параметры helper и проверки сети.']
+    ],
+    isMaintenanceView() { return this.activeView === 'maintenance' || this.maintenanceItems.some(item => item[0] === this.activeView); },
+    navIsActive(view) { return view === 'maintenance' ? this.isMaintenanceView() : this.activeView === view; },
+    viewTitle() { return [...this.navigationGroups.flatMap(group => group.items), ...this.maintenanceItems].find(item => item[0] === this.activeView)?.[1] || 'Обзор'; },
     viewDescription() {
-      return ({ status: 'Состояние сервера и действия, требующие внимания.', network: 'Интерфейс, режим TProxy и проверка соединения.', outbounds: 'Подключения, через которые Xray отправляет трафик.', routing: 'Какие домены и соединения направлять через прокси.', geodata: 'Источники и обновление списков доменов и IP-адресов.', xray: 'Проверка конфигурации и управление службой.', templates: 'Сравнение и применение системных конфигураций с подтверждением.', logs: 'Ошибки и принятые Xray соединения.', settings: 'Параметры helper и журналирования.' })[this.activeView] || '';
+      return ({ status: 'Состояние роутера, трафик и последние ошибки.', maintenance: 'Настройка и обслуживание уже работающего роутера.', network: 'Состояние, доступ в интернет и управление обработкой трафика.', outbounds: 'Подключения для выхода в интернет через прокси.', routing: 'Добавляйте домены и IPv4, которые должны открываться через прокси.', geodata: 'Источники и расписание обновления списков доменов и IP.', xray: 'Проверка конфигурации и управление службой.', templates: 'Сравнение и применение системных конфигураций.', updates: 'Установленная версия, обновление и восстановление комплекта.', logs: 'Журналы Xray и helper.', logging: 'Уровень подробности, файлы журналов и ротация.', settings: 'Общие параметры helper и проверки сети.' })[this.activeView] || '';
     },
     dashboardTitle() {
       if (this.statusStale) return 'Состояние шлюза не подтверждено';
@@ -90,8 +98,8 @@ document.addEventListener('alpine:init', () => {
       return issue.message;
     },
     async init() {
-      this.activeView = this.viewFromHash();
-      window.addEventListener('hashchange', () => { this.activeView = this.viewFromHash(); });
+      this.syncNavigation();
+      window.addEventListener('hashchange', () => this.syncNavigation());
       this.startUpdatePolling();
       await this.loadUpdateStatus();
       if (!this.updateInitialCheckStarted) {
@@ -101,17 +109,19 @@ document.addEventListener('alpine:init', () => {
       if (await this.loadSetup()) { window.setInterval(() => this.loadSetup(), 1500); return; }
       await Promise.all([this.loadStatus(), this.loadLogs(), this.loadGeodata(), this.loadProxyDomains(), this.loadTemplates(), this.loadSystemSettings(), this.loadSafeApply(), this.refreshHomeEvents()]);
       await this.loadNetworkProbes();
+      await this.loadConfigRollback();
       window.setInterval(() => { this.safeApplyNow = Date.now(); }, 1000);
-      window.setInterval(() => { this.loadStatus(); this.loadSafeApply(); this.loadGeodata(); }, 5000);
-      window.setInterval(() => { this.refreshHomeEvents(); }, 10000);
+      window.setInterval(() => { this.loadStatus(); this.loadSafeApply(); this.loadGeodata(); if (this.activeView === 'network') this.loadConfigRollback(); }, 5000);
+      window.setInterval(() => { this.refreshHomeEvents(); this.refreshLogs(); }, 10000);
     },
     viewFromHash() {
       const [view, tab] = window.location.hash.slice(1).split('/');
-      if (this.sectionTabs[view]) this.activeSettingsTab = this.sectionTabs[view];
-      if (view === 'settings') this.activeSettingsTab = ['logs', 'system'].includes(tab) ? tab : 'system';
-      return this.navigationGroups.some(group => group.items.some(item => item[0] === view)) ? view : 'status';
+      if (view === 'settings' && tab === 'logs') return 'logging';
+      if (view === 'maintenance' || view === 'xray') return 'network';
+      return [...this.navigationGroups.flatMap(group => group.items), ...this.maintenanceItems].some(item => item[0] === view) ? view : 'status';
     },
-    navigateSettings(tab) { window.location.hash = '#settings/' + (tab === 'logs' ? 'logs' : 'system'); this.activeView = this.viewFromHash(); this.navigationOpen = false; },
+    syncNavigation() { this.activeView = this.viewFromHash(); if (this.isMaintenanceView()) this.maintenanceOpen = true; },
+    navigateSettings(tab) { this.navigate(tab === 'logs' ? 'logging' : 'settings'); },
     async probeConnectivity() {
       if (this.pendingAction || this.setupMode) return;
       this.pendingAction = 'connectivity';
@@ -131,9 +141,11 @@ document.addEventListener('alpine:init', () => {
       try {
         const result = await this.api('/api/network/probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, ...(transactionId ? { transactionId } : {}) }), timeoutMs: 45000 });
         this.networkProbes = { ...this.networkProbes, latest: result, ...(stage === 'before' ? { before: result, after: null } : {}), ...(stage === 'after' ? { after: result } : {}) };
-        this.networkProbeMessage = result.reachable ? 'HTTPS с сервера доступен. Решение о сохранении настроек остаётся за вами.' : 'HTTPS-проверка не подтвердила доступность. Можно повторить проверку, сохранить настройки или выполнить откат.';
+        this.networkProbeMessage = stage === 'manual'
+          ? (result.reachable ? 'Проверочный сайт доступен с роутера.' : 'Доступ к проверочному сайту не подтверждён. Подробности — в результатах проверки.')
+          : (result.reachable ? 'HTTPS с сервера доступен. Решение о сохранении настроек остаётся за вами.' : 'HTTPS-проверка не подтвердила доступность. Можно повторить проверку, сохранить настройки или выполнить откат.');
         return result;
-      } catch (error) { this.networkProbeMessage = `Проверка недоступна: ${error.message}. Применение настроек не повторяется. Вы можете подтвердить или откатить их.`; }
+      } catch (error) { this.networkProbeMessage = stage === 'manual' ? `Проверка недоступна: ${error.message}.` : `Проверка недоступна: ${error.message}. Применение настроек не повторяется. Вы можете подтвердить или откатить их.`; }
       finally { this.networkProbeLoading = false; }
     },
     networkProbeSummary(result) {
@@ -142,7 +154,7 @@ document.addEventListener('alpine:init', () => {
       const https = result.reachable ? 'сайт доступен' : ({ tls_failed: 'ошибка TLS', tcp_failed: 'ошибка TCP', unexpected_http_status: 'неожиданный HTTP-код', http_timed_out: 'таймаут ответа' })[result.https?.code] || 'доступность не подтверждена';
       return `${this.formatDate(result.checkedAt)} · DNS: ${state(result.dns?.status)} · шлюз ${result.gateway || 'не определён'}: ${state(result.gatewayPing?.status)} · HTTPS: ${https} (HTTP ${result.httpStatus || '—'}, ожидается ${result.expectedStatus}) · ${result.durationMs} мс`;
     },
-    navigate(view) { window.location.hash = '#' + view; this.activeView = this.viewFromHash(); this.navigationOpen = false; if (this.status && this.activeView === 'status') this.refreshHomeEvents(); },
+    navigate(view) { window.location.hash = '#' + view; this.syncNavigation(); this.navigationOpen = false; if (this.status && this.activeView === 'status') this.refreshHomeEvents(); },
     async api(path, options = {}) {
       const setupHeaders = path.startsWith('/api/setup') && this.setupToken ? { 'X-Bootstrap-Token': this.setupToken } : {};
       const controller = new AbortController();
@@ -212,11 +224,15 @@ document.addEventListener('alpine:init', () => {
       }
       catch (error) { this.statusStale = true; this.statusLoadError = error.message; } finally { this.loading.status = false; }
     },
+    async refreshLogs() {
+      if (!this.logAutoRefresh || this.activeView !== 'logs' || document.hidden || this.setupMode) return;
+      await this.loadLogs();
+    },
     async loadLogs() {
       if (this.loading.logs) return;
       const kind = this.selectedLogKind;
       this.loading.logs = true;
-      try { const data = await this.api(`/api/logs/${kind}?limit=200`); if (kind === this.selectedLogKind) { this.logs = data.lines || []; this.logMessage = this.logs.length ? '' : 'Нет записей.'; } }
+      try { const data = await this.api(`/api/logs/${kind}?limit=200`); if (kind === this.selectedLogKind) { this.logs = [...(data.lines || [])].reverse(); this.loadedLogKind = kind; this.logMessage = this.logs.length ? '' : 'Нет записей.'; } }
       catch (error) { if (kind === this.selectedLogKind) { this.logs = []; this.logMessage = error.message; } }
       finally { this.loading.logs = false; if (kind !== this.selectedLogKind) await this.loadLogs(); }
     },
@@ -508,6 +524,21 @@ document.addEventListener('alpine:init', () => {
       this.pendingAction = 'geodata-save';
       try { await this.api('/api/settings/geodata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.geodataDraft) }); this.geodataDirty = false; this.geodataMessage = 'Настройки геоданных сохранены.'; await this.loadGeodata(); }
       catch (error) { this.geodataMessage = error.message; } finally { this.pendingAction = ''; }
+    },
+    async loadConfigRollback() {
+      try { this.configRollback = await this.api('/api/xray/config/rollback'); }
+      catch (error) { this.configRollback = null; this.configRollbackMessage = error.message; }
+    },
+    async rollbackConfiguration() {
+      if (!this.canMutate() || !this.configRollback?.available) return;
+      if (!window.confirm('Восстановить сохранённую конфигурацию Xray и перезапустить Xray? Текущие соединения через Xray будут прерваны.')) return;
+      this.pendingAction = 'config-rollback';
+      try {
+        await this.api('/api/xray/config/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedGeneration: this.configRollback.generation }) });
+        this.configRollbackMessage = 'Конфигурация восстановлена, Xray перезапущен.';
+        await this.loadStatus(); await this.loadConfigRollback();
+      } catch (error) { this.configRollbackMessage = error.message; }
+      finally { this.pendingAction = ''; }
     },
     async saveLogs() {
       if (!this.canMutate()) return;
@@ -1110,8 +1141,7 @@ document.addEventListener('alpine:init', () => {
       return match ? match[1] : 'recent';
     },
     openComponent(component) {
-      const destinations = { helper: 'settings', xray: 'xray', config: 'xray', system: 'network', tproxy: 'network', connectivity: 'network', geodata: 'geodata', errors: 'logs', 'ready-templates': 'templates', 'ready-recovery': 'templates', 'ready-database': 'settings', 'ready-xray_api': 'xray', setup: 'network' };
-      if (component === 'helper') this.activeSettingsTab = 'system';
+      const destinations = { helper: 'settings', xray: 'network', config: 'network', system: 'network', tproxy: 'network', connectivity: 'network', geodata: 'geodata', errors: 'logs', 'ready-templates': 'templates', 'ready-recovery': 'templates', 'ready-database': 'settings', 'ready-xray_api': 'network', setup: 'network' };
       if (component === 'errors') { this.selectedLogKind = 'error'; this.loadLogs(); }
       this.navigate(destinations[component] || 'status');
     },

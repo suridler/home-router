@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>XrayUI — управление сетью</title>
+    <title>XrayUI — роутер</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%232563eb%27/%3E%3Ctext x=%2716%27 y=%2723%27 text-anchor=%27middle%27 font-size=%2723%27 fill=%27white%27%3EX%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/styles.css" />
     <script defer src="/outbound-editor.js"></script>
@@ -13,22 +13,55 @@
   <body>
     <div class="shell" x-data="routerApp" x-init="init()">
       <aside class="sidebar">
-        <div class="brand"><div class="brand__mark">X</div><div><strong>XrayUI</strong><small>Управление сетью</small></div></div>
+        <div class="brand"><div class="brand__mark">X</div><div><strong>XrayUI</strong><small>Панель роутера</small></div></div>
         <button class="nav-toggle secondary" type="button" x-show="!setupMode" @click="navigationOpen = !navigationOpen" :aria-expanded="navigationOpen" aria-controls="main-navigation">Разделы ☰</button>
         <nav id="main-navigation" aria-label="Разделы панели" x-show="!setupMode" :class="{ 'is-open': navigationOpen }">
           <template x-for="group in navigationGroups" :key="group.label"><div class="nav-group">
             <p class="nav-group__label" x-text="group.label"></p>
             <template x-for="item in group.items" :key="item[0]">
-              <a :href="`#${item[0]}`" :class="{ active: activeView === item[0] }" :aria-current="activeView === item[0] ? 'page' : null" @click.prevent="navigate(item[0])"><span class="nav-symbol" aria-hidden="true" x-text="item[2]"></span><span x-text="item[1]"></span></a>
+              <div>
+                <template x-if="item[0] !== 'maintenance'"><a :href="`#${item[0]}`" :class="{ active: navIsActive(item[0]) }" :aria-current="navIsActive(item[0]) ? 'page' : null" @click.prevent="navigate(item[0])"><span class="nav-symbol" aria-hidden="true" x-text="item[2]"></span><span x-text="item[1]"></span></a></template>
+                <template x-if="item[0] === 'maintenance'"><div>
+                  <button class="nav-disclosure" type="button" @click="maintenanceOpen = !maintenanceOpen" :aria-expanded="maintenanceOpen" aria-controls="maintenance-navigation"><span class="nav-symbol" aria-hidden="true">⚙</span><span>Обслуживание</span><span class="nav-chevron" aria-hidden="true" x-text="maintenanceOpen ? '−' : '+'"></span></button>
+                  <div id="maintenance-navigation" class="nav-submenu" x-show="maintenanceOpen">
+                    <template x-for="entry in maintenanceItems" :key="entry[0]"><a :href="`#${entry[0]}`" @click.prevent="navigate(entry[0])" :class="{ active: activeView === entry[0] }" :aria-current="activeView === entry[0] ? 'page' : null" x-text="entry[1]"></a></template>
+                  </div>
+                </div></template>
+              </div>
             </template>
           </div></template>
         </nav>
+        <a class="sidebar-version" href="#updates" @click.prevent="navigate('updates')"><span>Версия системы</span><strong x-text="updateCurrentVersion()"></strong></a>
         <div class="sidebar-footer"><span class="connection-dot" :class="{ 'connection-dot--offline': statusStale || !status }"></span><span x-text="statusStale ? 'Нет свежих данных helper' : !status ? 'Ожидаем данные helper' : 'Связь с helper установлена'"></span></div>
       </aside>
 
       <main class="main">
-        <header class="topbar"><div><p class="eyebrow">Xray / <span x-text="setupMode ? 'Установка' : viewTitle()"></span></p><h1 x-text="setupMode ? 'Первичная настройка' : viewTitle()">Обзор</h1><p class="page-description" x-text="setupMode ? 'Подключите Xray и подготовьте сеть.' : viewDescription()"></p></div><a class="topbar-link" href="#logs" @click.prevent="navigate('logs')" x-show="!setupMode">Открыть журнал ↗</a></header>
-        <section class="panel full-width helper-update-panel" aria-labelledby="helper-update-title">
+        <header class="topbar"><div><p class="eyebrow">Роутер / <span x-show="!setupMode &amp;&amp; isMaintenanceView()">Обслуживание / </span><span x-text="setupMode ? 'Установка' : viewTitle()"></span></p><h1 x-text="setupMode ? 'Первичная настройка' : viewTitle()">Обзор</h1><p class="page-description" x-text="setupMode ? 'Подключите Xray и подготовьте сеть.' : viewDescription()"></p></div><a class="topbar-link" href="#logs" @click.prevent="navigate('logs')" x-show="!setupMode">Открыть журнал ↗</a></header>
+        <section class="notice notice--warning operation-notice" x-cloak x-show="activeView !== 'updates' &amp;&amp; (updateBlocksMutations() || updateIsRecoverable())" role="status"><div><strong x-text="updateStateLabel()"></strong><p>Откройте обновление системы, чтобы просмотреть операцию и доступные действия.</p></div><button class="secondary" @click="navigate('updates')">Открыть обновление</button></section>
+        <section class="notice notice--warning" x-cloak x-show="requestError" role="alert"><span x-text="requestError"></span><button class="text-button" @click="requestError = ''">Закрыть</button></section>
+        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.rebootRequired" role="alert" aria-live="assertive">
+          <div><strong>ТРЕБУЕТСЯ ПЕРЕЗАГРУЗКА СЕРВЕРА</strong>
+          <p>Файлы nftables, sysctl и systemd восстановлены из одной операции, но их рабочие эффекты НЕ восстановлены. Перезагрузите сервер вручную. Автоматической перезагрузки не будет.</p>
+          <p>Перезапуск helper или панели не заменяет перезагрузку сервера.</p>
+          <code>sudo systemctl reboot</code></div>
+        </section>
+        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.recoveryRequired" role="alert" aria-live="assertive">
+          <div><strong>ВОССТАНОВЛЕНИЕ НЕ ЗАВЕРШЕНО</strong>
+          <p>Не все файлы подтверждены как восстановленные. Повторите восстановление до перезагрузки. Изменения заблокированы. При отсутствии полной исторической копии требуется ручное восстановление оператором.</p>
+          <button class="secondary" :disabled="Boolean(pendingAction)" @click="resolveSafeApply('rollback')">Повторить восстановление файлов</button></div>
+        </section>
+        <section class="notice notice--warning" x-cloak x-show="!setupMode &amp;&amp; (statusStale || safeApplyError || !safeApplyKnown)" role="status">
+          <span x-text="mutationBlockedReason()"></span><button class="secondary" :disabled="loading.status || safeApplyLoading" @click="loadStatus(); loadSafeApply()">Повторить проверку</button>
+        </section>
+        <section class="safe-apply-banner" x-cloak x-show="!setupMode &amp;&amp; safeApply &amp;&amp; !safeApply.rebootRequired &amp;&amp; !safeApply.recoveryRequired" role="alert" aria-live="polite">
+          <div><strong>Настройки применены временно</strong><p><span x-text="templateLabel(safeApply?.templateId)"></span> · до отката: <strong x-text="safeApplySeconds()"></strong> с</p><p>Проверьте соединение с сервером. Затем подтвердите настройки или выполните откат. При откате сетевых настроек потребуется ручная перезагрузка.</p></div>
+          <div class="safe-apply-probe"><p x-show="networkProbes.after?.transactionId === safeApply?.transactionId" x-text="networkProbeSummary(networkProbes.after)"></p><p x-show="networkProbeMessage" x-text="networkProbeMessage"></p><p>Проверка сайта выполняется с сервера. LAN forwarding требует отдельного клиента. Неуспех проверки не запрещает сохранение настроек.</p><button class="secondary" :disabled="networkProbeLoading || safeApplySeconds() === 0" @click="runNetworkProbe('after', safeApply.transactionId)" x-text="networkProbeLoading ? 'Проверка…' : 'Повторить проверку сети'"></button></div>
+          <div class="actions"><button class="primary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError) || safeApplySeconds() === 0" @click="resolveSafeApply('confirm')">Сохранить настройки</button><button class="secondary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError)" @click="resolveSafeApply('rollback')">Откатить</button><button class="secondary" @click="navigate('network')">Проверить соединение →</button></div>
+        </section>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; actionMessage" x-text="actionMessage" role="status"></p>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; templateMessage" x-text="templateMessage" role="status"></p>
+        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; status &amp;&amp; !status.controlEnabled" x-text="mutationBlockedReason()"></p>
+        <section class="panel full-width helper-update-panel" x-cloak x-show="activeView === 'updates'" aria-labelledby="helper-update-title">
           <div class="section-heading">
             <div><p class="eyebrow">Комплект helper и веб-панели</p><h2 id="helper-update-title">Обновление системы</h2></div>
             <span class="badge-status" :class="{ 'badge-status--warning': updateIsRecoverable(), 'badge-status--ok': updateTerminal() }" x-text="updateStateLabel()"></span>
@@ -56,29 +89,7 @@
             <p class="notice">Состояние операции принадлежит helper и восстанавливается после перезапуска helper или панели. Потеря HTTP-ответа не запускает установку или откат повторно.</p>
           </details>
         </section>
-        <section class="notice notice--warning" x-cloak x-show="requestError" role="alert"><span x-text="requestError"></span><button class="text-button" @click="requestError = ''">Закрыть</button></section>
-        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.rebootRequired" role="alert" aria-live="assertive">
-          <div><strong>ТРЕБУЕТСЯ ПЕРЕЗАГРУЗКА СЕРВЕРА</strong>
-          <p>Файлы nftables, sysctl и systemd восстановлены из одной операции, но их рабочие эффекты НЕ восстановлены. Перезагрузите сервер вручную. Автоматической перезагрузки не будет.</p>
-          <p>Перезапуск helper или панели не заменяет перезагрузку сервера.</p>
-          <code>sudo systemctl reboot</code></div>
-        </section>
-        <section class="alert-banner reboot-required" x-cloak x-show="safeApply?.recoveryRequired" role="alert" aria-live="assertive">
-          <div><strong>ВОССТАНОВЛЕНИЕ НЕ ЗАВЕРШЕНО</strong>
-          <p>Не все файлы подтверждены как восстановленные. Повторите восстановление до перезагрузки. Изменения заблокированы. При отсутствии полной исторической копии требуется ручное восстановление оператором.</p>
-          <button class="secondary" :disabled="Boolean(pendingAction)" @click="resolveSafeApply('rollback')">Повторить восстановление файлов</button></div>
-        </section>
-        <section class="notice notice--warning" x-cloak x-show="!setupMode &amp;&amp; (statusStale || safeApplyError || !safeApplyKnown)" role="status">
-          <span x-text="mutationBlockedReason()"></span><button class="secondary" :disabled="loading.status || safeApplyLoading" @click="loadStatus(); loadSafeApply()">Повторить проверку</button>
-        </section>
-        <section class="safe-apply-banner" x-cloak x-show="!setupMode &amp;&amp; safeApply &amp;&amp; !safeApply.rebootRequired &amp;&amp; !safeApply.recoveryRequired" role="alert" aria-live="polite">
-          <div><strong>Настройки применены временно</strong><p><span x-text="templateLabel(safeApply?.templateId)"></span> · до отката: <strong x-text="safeApplySeconds()"></strong> с</p><p>Проверьте соединение с сервером. Затем подтвердите настройки или выполните откат. При откате сетевых настроек потребуется ручная перезагрузка.</p></div>
-          <div class="safe-apply-probe"><p x-show="networkProbes.after?.transactionId === safeApply?.transactionId" x-text="networkProbeSummary(networkProbes.after)"></p><p x-show="networkProbeMessage" x-text="networkProbeMessage"></p><p>Проверка сайта выполняется с сервера. LAN forwarding требует отдельного клиента. Неуспех проверки не запрещает сохранение настроек.</p><button class="secondary" :disabled="networkProbeLoading || safeApplySeconds() === 0" @click="runNetworkProbe('after', safeApply.transactionId)" x-text="networkProbeLoading ? 'Проверка…' : 'Повторить проверку сети'"></button></div>
-          <div class="actions"><button class="primary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError) || safeApplySeconds() === 0" @click="resolveSafeApply('confirm')">Сохранить настройки</button><button class="secondary" :disabled="Boolean(pendingAction) || safeApplyLoading || Boolean(safeApplyError)" @click="resolveSafeApply('rollback')">Откатить</button><button class="secondary" @click="navigate('network')">Проверить соединение →</button></div>
-        </section>
-        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; actionMessage" x-text="actionMessage" role="status"></p>
-        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; templateMessage" x-text="templateMessage" role="status"></p>
-        <p class="notice" x-cloak x-show="!setupMode &amp;&amp; status &amp;&amp; !status.controlEnabled" x-text="mutationBlockedReason()"></p>
+
         <section class="view" x-cloak x-show="setupMode"><section class="panel full-width">
           <p class="eyebrow">Начальная настройка</p><h2>Подготовка сервера</h2>
           <p>Выполните настройку в консоли сервера:</p>
@@ -90,7 +101,7 @@
         <section class="view" x-show="!setupMode &amp;&amp; activeView === 'status'">
           <div class="overview-top-row">
           <section class="gateway-summary" :class="statusStale ? 'state--unknown' : stateClass(status?.dashboard?.state)" aria-labelledby="gateway-summary-title">
-            <div class="section-heading"><div><p class="eyebrow">Общее состояние шлюза</p><h2 id="gateway-summary-title" x-text="dashboardTitle()"></h2></div><button class="secondary" :disabled="loading.status" @click="loadStatus()" x-text="loading.status ? 'Обновление…' : 'Обновить состояние'"></button></div>
+            <div class="section-heading"><div><p class="eyebrow">Общее состояние роутера</p><h2 id="gateway-summary-title" x-text="dashboardTitle()"></h2></div><button class="secondary" :disabled="loading.status" @click="loadStatus()" x-text="loading.status ? 'Обновление…' : 'Обновить'"></button></div>
             <p class="notice" x-text="dashboardDescription()"></p>
             <small class="updated-at" x-text="statusUpdatedAt ? `Последние полученные данные: ${formatDate(statusUpdatedAt)}` : 'Ожидаем данные helper'"></small>
             <div class="gateway-geodata">
@@ -98,7 +109,7 @@
               <div class="actions"><button class="secondary" :disabled="!geodata?.installed || !canMutate() || geodata?.operation?.state === 'running'" @click="updateGeodata()" x-text="(pendingAction === 'geodata-update' || geodata?.operation?.state === 'running') ? 'Обновление…' : 'Обновить геобазы'"></button><button class="secondary" @click="navigate('geodata')">Настроить</button></div>
             </div>
             <p class="notice" role="status" aria-live="polite" x-show="geodataMessage" x-text="geodataMessage"></p>
-            <details class="gateway-checks"><summary>Helper, Xray, сеть и конфигурация</summary>
+            <details class="gateway-checks"><summary>Состояние служб и конфигурации</summary>
               <ul class="gateway-checks__list"><template x-for="component in status?.dashboard?.components || []" :key="component.key"><li>
                 <button class="text-button" @click="openComponent(component.key)" x-text="component.title"></button>
                 <span :class="statusStale ? 'state--unknown' : stateClass(component.state)" x-text="statusStale ? 'Устаревшие данные' : stateLabel(component.state)"></span>
@@ -109,7 +120,7 @@
           <section class="panel status-proxy-domains" aria-labelledby="status-proxy-domains-title">
             <div class="section-heading">
               <div><p class="eyebrow">Динамический список</p><h3 id="status-proxy-domains-title">Домены и IPv4</h3></div>
-              <a class="status-proxy-domains__link" href="#routing" @click.prevent="navigate('routing')">Полный список маршрутизации →</a>
+              <a class="status-proxy-domains__link" href="#routing" @click.prevent="navigate('routing')">Все ресурсы →</a>
             </div>
             <p class="notice" x-show="status?.proxyState === 'direct-placeholder'">Прокси сейчас не настроен и выходит напрямую. Домены и IPv4 можно добавлять: они сохранятся в динамическом списке, но прямой выход не изменится.</p>
             <form class="status-proxy-domain-form" @submit.prevent="addProxyDomain()">
@@ -143,13 +154,13 @@
               <button type="button" class="secondary recent-events__filter" :class="{ active: homeEventFilter === 'info' }" :aria-pressed="homeEventFilter === 'info'" @click="selectHomeEventFilter('info')">Информация</button>
             </div>
             <div x-show="homeEventFilter === 'error'">
-              <p class="notice">Пять последних ошибок из 100 сохранённых helper. Одинаковые сообщения показаны отдельно.</p>
+              <p class="notice">Последние ошибки.</p>
               <p class="notice" x-text="errorHistoryStatus()"></p>
               <p class="notice" x-show="status?.errorHistory?.collectedAt &amp;&amp; !status?.errorHistory?.unavailable &amp;&amp; !(status?.errorHistory?.errors || []).length">В сохранённой истории ошибок нет.</p>
               <ul class="recent-errors"><template x-for="event in status?.errorHistory?.errors || []" :key="event.id"><li class="recent-errors__item recent-errors__item--error"><time x-text="formatDate(event.time || event.observedAt)"></time><small x-text="event.time ? event.source : `${event.source} · время получения, время ошибки неизвестно`"></small><code x-text="event.message"></code></li></template></ul>
             </div>
             <div x-show="homeEventFilter !== 'error'">
-              <p class="notice">Последние восемь записей выбранного уровня из текущего журнала. Обновляются каждые 10 секунд, пока открыт этот экран.</p>
+              <p class="notice">Последние события · обновление каждые 10 секунд.</p>
               <p class="notice" x-show="homeEventLoading">Обновление событий…</p>
               <p class="notice" :class="homeEventError ? 'notice--warning' : ''" x-show="!homeEventLoading &amp;&amp; (homeEventError || homeEventUpdatedAt)" x-text="homeEventStatus()"></p>
               <p class="notice" x-show="homeEventUpdatedAt &amp;&amp; !homeEventLoading &amp;&amp; !homeEventError &amp;&amp; !filteredHomeEvents().length">Нет событий для выбранного фильтра.</p>
@@ -159,7 +170,14 @@
 
         </section>
         <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'network'">
-          <section class="panel full-width"><h3>Параметры сети</h3>
+          <section class="panel full-width"><h3>Состояние роутера</h3>
+            <p class="notice">Состояние служб и настроек. Доступ в интернет проверяется отдельно кнопкой ниже.</p>
+            <dl class="kv-list">
+              <div><dt>Обработка соединений (Xray)</dt><dd x-text="statusStale ? 'Данные устарели' : ({running: 'Работает', stopped: 'Остановлена'})[status?.xray] || 'Нет данных'"></dd></div>
+              <div><dt>Прокси-подключение</dt><dd x-text="status?.proxyState === 'direct-placeholder' ? 'Прокси не настроен: используется прямой выход' : status?.proxyState === 'configured' ? 'Настроено' : 'Нет данных'"></dd></div>
+              <div><dt>Обработка трафика устройств</dt><dd x-text="statusStale ? 'Данные устарели' : status?.dashboard?.installation?.tproxyService === 'ok' ? 'Служба работает; доступ устройств отдельно не проверялся' : 'Работа службы не подтверждена'"></dd></div>
+            </dl>
+            <details class="technical-details"><summary>Технические подробности сети</summary>
             <dl class="kv-list">
               <div><dt>Helper</dt><dd x-text="status?.dashboard?.installation?.helperVersion || 'Версия недоступна'"></dd></div>
               <div><dt>Первичная настройка</dt><dd x-text="({completed: 'Завершена', required: 'Требуется', recovery: 'Нужно восстановление'})[status?.dashboard?.installation?.setup] || 'Нет данных'"></dd></div>
@@ -168,26 +186,46 @@
               <div><dt>Сервис TProxy</dt><dd x-text="status?.dashboard?.installation?.tproxyService === 'ok' ? 'Работает' : 'Не подтверждён'"></dd></div>
             </dl>
             <details class="technical-details"><summary>О проверках сети</summary><p class="notice">Показаны настройки и локальные проверки helper. Прохождение LAN-трафика проверяется отдельно с клиента.</p></details>
-            <button class="secondary" @click="navigate('templates')">Открыть системные шаблоны →</button>
+            <button class="secondary" @click="navigate('templates')">Открыть системные шаблоны →</button></details>
           </section>
 
-          <section class="panel full-width"><div class="section-heading"><h3>Доступ в интернет с сервера</h3><button class="secondary" :disabled="networkProbeLoading" @click="runNetworkProbe()" x-text="networkProbeLoading ? 'Проверка…' : 'Проверить шлюз и сайт'"></button></div>
-            <p class="notice">IPv4 DNS, ping шлюза и HTTPS через обычную маршрутизацию сервера. ICMP может блокироваться независимо от HTTPS. LAN forwarding здесь не проверяется.</p>
-            <p x-show="networkProbes.before" x-text="'До включения: ' + networkProbeSummary(networkProbes.before)"></p><p x-show="networkProbes.after" x-text="'После включения: ' + networkProbeSummary(networkProbes.after)"></p><p x-text="networkProbeSummary(networkProbes.latest)"></p>
+          <section class="panel full-width"><div class="section-heading"><h3>Доступ в интернет</h3><button class="secondary" :disabled="networkProbeLoading" @click="runNetworkProbe()" x-text="networkProbeLoading ? 'Проверка…' : 'Проверить интернет'"></button></div>
+            <p class="notice">Проверка выполняется с самого роутера. Она не подтверждает доступ в интернет на всех подключённых устройствах.</p>
+            <p x-show="networkProbes.latest" :class="networkProbes.latest?.reachable ? 'state--ok' : 'state--warning'" x-text="networkProbes.latest?.reachable ? 'Проверочный сайт доступен' : 'Доступ к проверочному сайту не подтверждён'"></p>
+            <small class="updated-at" x-show="networkProbes.latest" x-text="formatDate(networkProbes.latest?.checkedAt)"></small>
+            <details class="technical-details"><summary>Результаты DNS, шлюза и HTTPS</summary><p class="notice">IPv4 DNS, ping шлюза и HTTPS через обычную маршрутизацию сервера. Отказ ping сам по себе не означает отсутствие интернета.</p>
+            <p x-show="networkProbes.before" x-text="'До включения: ' + networkProbeSummary(networkProbes.before)"></p><p x-show="networkProbes.after" x-text="'После включения: ' + networkProbeSummary(networkProbes.after)"></p><p x-text="networkProbeSummary(networkProbes.latest)"></p></details>
             <p class="notice" role="status" aria-live="polite" x-text="networkProbeMessage"></p><button class="text-button" @click="navigate('settings/system')">Настроить сайт и таймаут →</button>
           </section>
-          <section class="panel full-width"><div class="section-heading"><h3>Проверка соединения</h3>
+          <section class="panel full-width"><div class="section-heading"><h3>Запуск и перезапуск</h3><div class="actions">
+            <button class="secondary" :disabled="!canMutate()" @click="runAction('start')">Запустить Xray</button>
+            <button class="secondary" :disabled="!canMutate()" @click="runAction('stop')">Остановить Xray</button>
+            <button class="primary" :disabled="!canMutate()" @click="runAction('restart')" x-text="pendingAction === 'restart' ? 'Перезапуск…' : 'Перезапустить Xray'"></button>
+            <button class="secondary" :disabled="Boolean(pendingAction) || Boolean(safeApply)" @click="testConfig" x-text="pendingAction === 'config-test' ? 'Проверка…' : 'Проверить конфигурацию'"></button>
+          </div></div>
+          <p class="notice">Xray обрабатывает прокси-трафик. Его перезапуск прерывает текущие соединения через него; остановка отключает обработку трафика через прокси.</p><p class="notice" :class="status?.controlEnabled ? 'notice--ok' : 'notice--warning'" x-text="status?.controlEnabled ? 'Управление включено' : 'Режим просмотра. Для управления включите [web].control_enabled в helper.'"></p>
+          <p class="notice" x-show="configTestMessage" x-text="configTestMessage"></p></section>
+
+          <section class="panel full-width"><div class="section-heading"><h3>Откат конфигурации Xray</h3><div class="actions">
+            <button class="secondary" :disabled="Boolean(pendingAction)" @click="loadConfigRollback()">Обновить состояние</button>
+            <button class="secondary" :disabled="!canMutate() || !configRollback?.available" @click="rollbackConfiguration()" x-text="pendingAction === 'config-rollback' ? 'Восстановление…' : 'Восстановить и перезапустить Xray'"></button>
+          </div></div><p class="notice" x-text="configRollback ? (configRollback.available ? 'Сохранённая версия доступна. При внешних непринятых правках восстанавливается последняя принятая конфигурация; иначе — предыдущая.' : 'Сохранённой версии для отката пока нет.') : 'Состояние резервной версии не получено.'"></p>
+          <p class="notice" role="status" x-text="configRollbackMessage"></p></section>
+          <details class="panel full-width technical-details"><summary>Технические подробности Xray: файлы, API и порты</summary><h3>Сведения о Xray</h3><ul class="kv-list">
+          <template x-for="row in [['Исполняемый файл Xray', `${status?.xrayBinary || '—'} (${status?.xrayBinarySource || '—'})`], ['Xray API', `${status?.xrayApi || '—'} (${status?.xrayApiSource || '—'})`], ['Конфигурация Xray', `${status?.xrayConfig || '—'} (${status?.xrayConfigSource || '—'})`], ['systemd unit', status?.xrayUnit], ['Время работы', status?.uptime]]" :key="row[0]"><li><span x-text="row[0]"></span><strong x-text="row[1]"></strong></li></template>
+        </ul><h3>Входящие подключения</h3><p class="notice" x-show="!status?.ports?.length">Входящие подключения не найдены.</p><div class="inbound-list"><template x-for="(inbound, index) in status?.ports || []" :key="index"><div class="inbound-row"><strong x-text="inbound.tag || 'Без названия'"></strong><span x-text="inbound.protocol || '—'"></span><code x-text="inbound.port || '—'"></code></div></template></div></details>
+          <details class="panel full-width technical-details"><summary>Расширенная диагностика: API, DNS и TCP</summary><div class="section-heading"><h3>Проверка компонентов</h3>
             <button class="secondary" :disabled="Boolean(pendingAction)" @click="probeConnectivity()">Запустить диагностику</button></div>
             <label>Прокси-сервер для проверки TCP (необязательно)<select x-model="connectivityOutbound"><option value="">Без проверки прокси-сервера</option><template x-for="outbound in connectivityOutbounds()" :key="outbound.tag"><option :value="outbound.tag" x-text="outbound.tag"></option></template></select></label>
             <p class="notice" x-text="connectivityMessage || 'Проверяются API Xray и DNS для example.com. Доступность сайта проверяется в блоке выше; LAN forwarding — отдельно с клиента.'"></p>
             <template x-for="layer in connectivity?.layers || []" :key="layer.name"><p><strong x-text="layer.name"></strong>: <span x-text="layer.status"></span> — <span x-text="layer.scope"></span> <time x-text="formatDate(layer.checkedAt)"></time></p></template>
             <template x-for="check in connectivity?.routingEvidence || []" :key="check.name"><p><span x-text="check.name"></span>: <span x-text="check.status"></span> (локальные признаки маршрутизации)</p></template>
-          </section>
+          </details>
 
-          <section class="panel full-width"><div class="section-heading"><h3>Управление TProxy</h3><div class="actions">
+          <details class="panel full-width technical-details"><summary>Управление TProxy</summary><div class="section-heading"><h3>Обработка трафика</h3><div class="actions">
 
             <button class="secondary" x-cloak x-show="status && !status.tproxy?.ok" :disabled="!canMutate()" @click="runAction('network-start')">Включить TProxy с подтверждением</button>
-          </div></div><p class="notice">Включение TProxy требует подтверждения. Автозапуск применяется отдельным действием.</p></section>
+          </div></div><p class="notice">Включение TProxy требует подтверждения. Маршрутизация включается и выключается вместе с Xray.</p></details>
         </section>
 
         <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'routing'">
@@ -271,30 +309,16 @@
           </section>
         </section>
 
-        <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'xray'">          <section class="panel full-width"><div class="section-heading"><h3>Управление Xray</h3><div class="actions">
-            <button class="secondary" :disabled="!canMutate()" @click="runAction('start')">Запустить</button>
-            <button class="secondary" :disabled="!canMutate()" @click="runAction('stop')">Остановить</button>
-            <button class="primary" :disabled="!canMutate()" @click="runAction('restart')" x-text="pendingAction === 'restart' ? 'Перезапуск…' : 'Перезапустить'"></button>
-            <button class="secondary" :disabled="Boolean(pendingAction) || Boolean(safeApply)" @click="testConfig" x-text="pendingAction === 'config-test' ? 'Проверка…' : 'Проверить конфиг'"></button>
-          </div></div>
-          <p class="notice" :class="status?.controlEnabled ? 'notice--ok' : 'notice--warning'" x-text="status?.controlEnabled ? 'Управление включено' : 'Режим просмотра. Для управления включите [web].control_enabled в helper.'"></p>
-          <p class="notice" x-show="configTestMessage" x-text="configTestMessage"></p></section>
-
-<section class="panel full-width"><h3>Сведения о Xray</h3><ul class="kv-list">
-          <template x-for="row in [['Исполняемый файл Xray', `${status?.xrayBinary || '—'} (${status?.xrayBinarySource || '—'})`], ['Xray API', `${status?.xrayApi || '—'} (${status?.xrayApiSource || '—'})`], ['Конфигурация Xray', `${status?.xrayConfig || '—'} (${status?.xrayConfigSource || '—'})`], ['systemd unit', status?.xrayUnit], ['Время работы', status?.uptime]]" :key="row[0]"><li><span x-text="row[0]"></span><strong x-text="row[1]"></strong></li></template>
-        </ul></section><section class="panel full-width"><h3>Входящие подключения</h3><p class="notice" x-show="!status?.ports?.length">Входящие подключения не найдены.</p><div class="inbound-list"><template x-for="(inbound, index) in status?.ports || []" :key="index"><div class="inbound-row"><strong x-text="inbound.tag || 'Без названия'"></strong><span x-text="inbound.protocol || '—'"></span><code x-text="inbound.port || '—'"></code></div></template></div></section></section>
-
         <section class="view" x-cloak x-show="!setupMode &amp;&amp; activeView === 'logs'"><section class="panel full-width"><div class="section-heading"><h3>Журналы</h3><div class="actions">
-          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'error' }" @click="selectedLogKind = 'error'; loadLogs()">Ошибки</button>
-          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'access' }" @click="selectedLogKind = 'access'; loadLogs()">Соединения</button>
+          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'error' }" @click="selectedLogKind = 'error'; loadLogs()">Ошибки Xray</button>
+          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'access' }" @click="selectedLogKind = 'access'; loadLogs()">Соединения Xray</button>
+          <button class="secondary" :disabled="loading.logs" :class="{ 'log-tab': true, active: selectedLogKind === 'helper' }" @click="selectedLogKind = 'helper'; loadLogs()">Helper</button>
+          <label class="log-auto-refresh"><input type="checkbox" x-model="logAutoRefresh" /> Автообновление · 10 с</label>
           <button class="secondary" :disabled="loading.logs" @click="loadLogs" x-text="loading.logs ? 'Загрузка…' : 'Обновить'"></button>
-        </div></div><pre class="logs log-viewer" x-text="loading.logs ? 'Загрузка…' : (logs.join('\n') || logMessage || 'Нет записей.')"></pre></section></section>
+        </div></div><p class="muted">Свежие записи сверху · последние 200 строк</p><pre class="logs log-viewer" x-text="(loadedLogKind === selectedLogKind &amp;&amp; logs.length) ? logs.join('\n') : (loading.logs ? 'Загрузка…' : (logMessage || 'Нет записей.'))"></pre></section></section>
 
-        <section class="view" x-cloak x-show="!setupMode &amp;&amp; ['settings', 'outbounds', 'geodata', 'templates'].includes(activeView)"><div class="tabs" aria-label="Настройки" x-show="activeView === 'settings'">
-          <button class="tab" :class="{ active: activeSettingsTab === 'logs' }" :aria-pressed="activeSettingsTab === 'logs'" @click="navigateSettings('logs')">Журналы</button>
-          <button class="tab" :class="{ active: activeSettingsTab === 'system' }" :aria-pressed="activeSettingsTab === 'system'" @click="navigateSettings('system')">Общие</button>
-        </div>
-          <section class="panel full-width" x-show="activeView === 'settings' &amp;&amp; activeSettingsTab === 'logs'"><h3>Настройки журналирования</h3><form class="settings-form" @submit.prevent="saveLogs" @input="markLogDirty">
+        <section class="view" x-cloak x-show="!setupMode &amp;&amp; ['settings', 'logging', 'outbounds', 'geodata', 'templates'].includes(activeView)">
+          <section class="panel full-width" x-show="activeView === 'logging'"><h3>Настройки журналирования</h3><form class="settings-form" @submit.prevent="saveLogs" @input="markLogDirty">
             <label><span>Журнал соединений</span><select x-model="logDraft.access.mode"><option value="file">Файл</option><option value="journal">Системный журнал</option><option value="none">Отключён</option></select></label>
             <label x-show="logDraft.access.mode === 'file'"><span>Путь журнала соединений</span><input type="text" x-model="logDraft.access.path" placeholder="/var/log/xray/access.log" /></label>
             <label><span>Журнал ошибок</span><select x-model="logDraft.error.mode"><option value="file">Файл</option><option value="journal">Системный журнал</option><option value="none">Отключён</option></select></label>
@@ -357,7 +381,7 @@
             <p>Запись в системном журнале:</p><code x-text="`journalctl -u xray-core-helper.service --grep=${geodata?.operation?.id || ''}`"></code>
           </details></section>
           <section class="panel full-width" x-cloak x-show="activeView === 'templates'">
-            <div class="section-heading"><div><p class="eyebrow">Системные конфигурации</p><h3>Системные шаблоны</h3></div><button class="secondary" :disabled="templatesLoading || Boolean(pendingAction)" @click="loadTemplates(true)" x-text="templatesLoading ? 'Обновление…' : 'Обновить состояние'"></button></div>
+            <div class="section-heading"><div><p class="eyebrow">Системные конфигурации</p><h3>Системные шаблоны</h3></div><button class="secondary" :disabled="templatesLoading || Boolean(pendingAction)" @click="loadTemplates(true)" x-text="templatesLoading ? 'Обновление…' : 'Обновить'"></button></div>
             <p class="notice">«Принять системный файл» обновляет рабочий шаблон по системе. «Применить шаблон» переносит шаблон в систему. Действия доступны при наличии различий.</p>
             <div class="template-table" role="table" aria-label="Состояние системных шаблонов"><template x-for="row in templates" :key="row.templateId"><div class="template-row" role="row">
               <strong x-text="templateLabel(row.templateId)"></strong><span class="badge-status" :class="row.state === 'synchronized' ? 'badge-status--ok' : 'badge-status--warning'" x-text="templateStateLabel(row.state)"></span>
@@ -366,7 +390,7 @@
             </div></template></div>
             <p class="notice" x-show="!templates.length || templateMessage" x-text="templateMessage || 'Состояние шаблонов недоступно.'"></p>
           </section>
-          <section class="panel full-width" x-cloak x-show="activeView === 'settings' &amp;&amp; activeSettingsTab === 'system'"><h3>Настройки helper</h3><form class="settings-form" @submit.prevent="saveSystemSettings"><label><span>Число резервных копий на шаблон</span><input type="number" min="1" max="100" required x-model.number="systemSettings.backup.retainPerTemplate" /></label><label><span>URL проверки сети (HTTPS)</span><input type="url" required x-model.trim="systemSettings.connectivity.url" /></label><label><span>Ожидаемый HTTP-код</span><input type="number" min="200" max="299" required x-model.number="systemSettings.connectivity.expectedStatus" /></label><label><span>Таймаут проверки, секунд</span><input type="number" min="5" max="30" required x-model.number="systemSettings.connectivity.timeoutSeconds" /></label><button class="primary" type="submit" :disabled="!canMutate()" x-text="pendingAction === 'system-settings-save' ? 'Сохранение…' : 'Сохранить настройки'"></button></form><p class="notice">От 1 до 100. По умолчанию — 10.</p><p class="notice" x-show="settingsMessage" x-text="settingsMessage"></p></section>
+          <section class="panel full-width" x-cloak x-show="activeView === 'settings'"><h3>Настройки helper</h3><form class="settings-form" @submit.prevent="saveSystemSettings"><label><span>Число резервных копий на шаблон</span><input type="number" min="1" max="100" required x-model.number="systemSettings.backup.retainPerTemplate" /></label><label><span>URL проверки сети (HTTPS)</span><input type="url" required x-model.trim="systemSettings.connectivity.url" /></label><label><span>Ожидаемый HTTP-код</span><input type="number" min="200" max="299" required x-model.number="systemSettings.connectivity.expectedStatus" /></label><label><span>Таймаут проверки, секунд</span><input type="number" min="5" max="30" required x-model.number="systemSettings.connectivity.timeoutSeconds" /></label><button class="primary" type="submit" :disabled="!canMutate()" x-text="pendingAction === 'system-settings-save' ? 'Сохранение…' : 'Сохранить настройки'"></button></form><p class="notice">От 1 до 100. По умолчанию — 10.</p><p class="notice" x-show="settingsMessage" x-text="settingsMessage"></p></section>
         </section>
       </main>
     </div>
