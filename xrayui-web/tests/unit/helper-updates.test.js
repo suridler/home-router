@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+// The default backend is not used; requests use the explicit fake helper below.
+process.env.XRAY_CORE_HELPER_SOCKET = '/unused-test-helper.sock';
 const { createApp } = require('../../app');
 const { createBackend } = require('../../services/backend');
 const { createHelperClient, LONG_OPERATION_TIMEOUT_MS, MAX_REQUEST_TIMEOUT_MS } = require('../../services/helper-client');

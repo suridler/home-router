@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { isIP } = require('node:net');
 
 // No managed-setting fallback to HOST/PORT/XRAYUI_CONTROL_ENABLED. The
@@ -27,6 +26,6 @@ module.exports = Object.freeze({
   get host() { return settings?.host; },
   get controlEnabled() { return settings?.controlEnabled ?? false; },
   applyWebSettings,
-  helperSocket: process.env.XRAY_CORE_HELPER_SOCKET || '/run/xray-core-helper/helper.sock',
+  helperSocket: process.env.XRAY_CORE_HELPER_SOCKET,
   bootstrapToken: process.env.XRAYUI_BOOTSTRAP_TOKEN || "",
 });

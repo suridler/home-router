@@ -271,7 +271,8 @@ Daemon работает как root и слушает только Unix socket, 
 
 Web работает как `xrayui-web` с группой `xray-core-helper`. Перед bind получает
 настройки Helper. Runtime web.env содержит socket и временный setup token,
-но не listener/control settings. После запуска API Helper просит systemd
+но не listener/control settings. Панель не читает локальный `.env` и не подставляет
+собственный путь сокета. После запуска API Helper просит systemd
 запустить статический web unit. Headless не требует Node или web account.
 
 Остановка Helper/web/exporter не выключает data plane. Уже работающая web-панель

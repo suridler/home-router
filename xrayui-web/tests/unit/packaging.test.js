@@ -24,12 +24,6 @@ test('systemd unit runs only as the unprivileged helper socket consumer', () => 
   assert.doesNotMatch(unit, /^Wants=.*xray-core-helper/m);
 });
 
-test('environment contains bootstrap discovery only, no managed settings', () => {
-  const environment = read('packaging/xrayui-web.env');
-  assert.match(environment, /^XRAY_CORE_HELPER_SOCKET=\/run\/xray-core-helper\/helper\.sock$/m);
-  assert.doesNotMatch(environment, /^(?:HOST|PORT|XRAYUI_CONTROL_ENABLED)=/m);
-});
-
 test('deployment creates a dedicated account and verifies the API boundary', () => {
   const sysusers = read('packaging/sysusers.d/xrayui-web.conf');
   const smoke = read('packaging/install-and-smoke.sh');

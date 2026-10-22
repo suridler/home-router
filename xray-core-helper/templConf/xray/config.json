@@ -184,7 +184,13 @@
       "settings": {
         "rules": [
           {
-            "action": "hijack"
+            // Встроенный DNS обрабатывает A и AAAA.
+            "action": "hijack",
+            "qType": "1,28"
+          },
+          {
+            // Остальные типы запросов передаём исходному DNS-серверу.
+            "action": "direct"
           }
         ]
       },
