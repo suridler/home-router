@@ -8,6 +8,7 @@ document.addEventListener('alpine:init', () => {
     loading: { status: false, logs: false, geodata: false }, pendingAction: '', logDirty: false, geodataDirty: false,
     logDraft: { access: { mode: 'journal', path: '' }, error: { mode: 'journal', path: '' }, loglevel: 'warning', dnsLog: false, rotationChange: 'keep', restart: false },
     safeApply: null, safeApplyKnown: false, safeApplyError: '', safeApplyLoading: false, safeApplyNow: Date.now(),
+    coreUpdate: null, coreUpdateCheck: null, coreUpdateBusy: false, coreUpdateError: '', coreUpdateReadError: '', coreUpdateLoading: false, coreAction: null,
     helperUpdate: null, updateCheck: null, updateLoading: false, updateChecking: false, updateActionBusy: false,
     updateMessage: '', updateError: '', updateReadError: '', updateTargetVersion: '', updatePolling: false,
     updateInitialCheckStarted: false, updatePollTimer: null, updateUncertain: false,
@@ -102,6 +103,7 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('hashchange', () => this.syncNavigation());
       this.startUpdatePolling();
       await this.loadUpdateStatus();
+      await this.loadCoreUpdate();
       if (!this.updateInitialCheckStarted) {
         this.updateInitialCheckStarted = true;
         if (this.updateControlsEnabled()) this.checkForUpdate({ initial: true }).catch(() => {});
@@ -896,6 +898,7 @@ document.addEventListener('alpine:init', () => {
     startUpdatePolling() {
       if (this.updatePollTimer !== null || typeof window === 'undefined' || typeof window.setInterval !== 'function') return;
       this.updatePollTimer = window.setInterval(() => { this.pollUpdateStatus(); }, 3000);
+      window.setInterval(() => { if (this.coreUpdateActive() || this.activeView === 'updates') this.loadCoreUpdate(); }, 3000);
     },
     async pollUpdateStatus() {
       if (!this.updatePolling && !this.updateIsActive()) return null;
@@ -946,6 +949,50 @@ document.addEventListener('alpine:init', () => {
       } finally {
         this.updateLoading = false;
       }
+    },
+    coreUpdateActive() { return ['launching', 'running'].includes(this.coreUpdate?.operation?.state); },
+    coreUpdateFailed() { return this.coreUpdate?.operation?.state === 'failed'; },
+    coreUpdateStage() {
+      const op = this.coreUpdate?.operation;
+      if (!op) return 'Обновление ещё не запускалось';
+      const labels = { launching: 'Запуск операции', download: 'Скачивание и проверка контрольной суммы', stop_helper: 'Подготовка к замене', validate: 'Проверка конфига новым Xray', backup: 'Сохранение предыдущего бинарника', replace_binary: 'Замена бинарника', restore_binary: 'Восстановление предыдущего бинарника', restart_xray: 'Перезапуск Xray', completed: 'Завершено' };
+      if (op.state === 'succeeded') return 'Xray обновлён';
+      if (op.state === 'rolled_back') return 'Предыдущий бинарник восстановлен';
+      return `${this.coreUpdateFailed() ? 'Ошибка · ' : ''}${labels[op.stage] || op.stage}`;
+    },
+    async loadCoreUpdate() {
+      if (this.coreUpdateLoading) return;
+      this.coreUpdateLoading = true;
+      try {
+        this.coreUpdate = await this.api('/api/xray-upgrade');
+        this.coreUpdateReadError = '';
+        const op = this.coreUpdate?.operation;
+        if (this.coreAction && op?.actionId === this.coreAction.actionId) this.coreAction = null;
+        if (op?.state === 'succeeded') this.coreUpdateCheck = null;
+      } catch (error) { this.coreUpdateReadError = 'Нет ответа helper. Операция могла продолжиться; обновляем её состояние.'; }
+      finally { this.coreUpdateLoading = false; }
+    },
+    async checkCoreUpdate() {
+      if (this.coreUpdateBusy) return;
+      this.coreUpdateBusy = true; this.coreUpdateError = '';
+      try { this.coreUpdateCheck = await this.api('/api/xray-upgrade/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+      catch (error) { this.coreUpdateError = error.message; }
+      finally { this.coreUpdateBusy = false; }
+    },
+    async runCoreUpdate(action) {
+      if (this.coreUpdateBusy || this.coreUpdateActive() || !this.coreUpdate?.controlEnabled) return;
+      if (this.coreAction && this.coreAction.action !== action) { this.coreUpdateError = 'Сначала получите результат предыдущей команды обновления.'; return; }
+      const messages = { apply: 'Обновить Xray до последней стабильной версии? Xray будет перезапущен, соединения могут прерваться. Конфиг и геобазы сохраняются.', retry: 'Повторить обновление и запуск выбранной версии Xray?', rollback: 'Восстановить предыдущий бинарник и перезапустить Xray? Конфиг и геобазы сохраняются.' };
+      if (!window.confirm(messages[action])) return;
+      this.coreUpdateBusy = true; this.coreUpdateError = '';
+      const operationId = this.coreUpdate?.operation?.id;
+      this.coreAction ||= { action, actionId: this.newUpdateActionId(), ...(action === 'apply' ? {} : { operationId }) };
+      const { actionId } = this.coreAction;
+      try {
+        const result = await this.api(`/api/xray-upgrade/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actionId, ...(action === 'apply' ? {} : { operationId }) }) });
+        this.coreUpdate.operation = result.operation; this.coreAction = null;
+      } catch (error) { if (error.status >= 400) this.coreAction = null; this.coreUpdateError = `${error.message}. Проверьте состояние операции перед повтором.`; }
+      finally { this.coreUpdateBusy = false; await this.loadCoreUpdate(); }
     },
     async loadHelperUpdate() { return this.loadUpdateStatus(); },
     async checkForUpdate(options = {}) {

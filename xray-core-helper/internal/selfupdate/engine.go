@@ -64,6 +64,11 @@ type Engine struct {
 	// ResolveAssets is a read-only systemd discovery hook.
 	ResolveAssets func(context.Context) (string, error)
 	Setup         func(context.Context) error
+	// EnsureXray is wired only by the standalone installer, never the daemon API.
+	EnsureXray func(context.Context, *Operation) error
+	// Fixed dependency boundaries for core upgrade tests, never API parameters.
+	XrayInstallation func(context.Context) (xrayservice.Installation, error)
+	XrayDownload     func(context.Context, string, string) (string, error)
 	// Check is injectable for hermetic service verification, never HTTP input.
 	Check func(context.Context, *Operation) error
 }
@@ -151,6 +156,11 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 		return nil, err
 	}
 	defer unlock()
+	if core, coreErr := e.xrayUpgradeState(); coreErr != nil {
+		return nil, coreErr
+	} else if xrayUpgradeActive(core) {
+		return nil, ErrBusy
+	}
 	previous, err := e.Store.Load()
 	if err != nil {
 		return nil, err
@@ -219,6 +229,8 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 		op.ID = previous.ID
 		op.CreatedAt = previous.CreatedAt
 		op.Attempts = previous.Attempts
+		op.XrayVersion = previous.XrayVersion
+		op.XrayInstallStarted = previous.XrayInstallStarted
 		if err = os.RemoveAll(filepath.Join(e.Store.Dir(op.ID), "bundle")); err != nil {
 			return nil, err
 		}
@@ -267,7 +279,17 @@ func (e *Engine) prepare(ctx context.Context, version string, web *bool, local s
 			return fail(err)
 		}
 	}
-	// Use the downloaded defaults before any service or installed file changes.
+	// Install the prerequisite only on an explicit standalone fresh install.
+	if op.Fresh && e.EnsureXray != nil {
+		op.Set("xray_install")
+		if err = e.Store.Save(op); err != nil {
+			return fail(err)
+		}
+		if err = e.EnsureXray(ctx, op); err != nil {
+			return fail(err)
+		}
+	}
+	// Use the downloaded defaults before any helper service or installed file changes.
 	if err = e.preflight(ctx, bundleDir); err != nil {
 		return fail(err)
 	}

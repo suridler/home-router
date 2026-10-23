@@ -85,6 +85,25 @@ function registerUpdateRoutes(app, backend) {
     backend.rollbackUpdate(operationId, actionId)
   )));
 
+  router.get('/api/xray-upgrade', asyncHandler(async (_req,res) => {
+    res.json({ ...await backend.getCoreUpdateStatus(), controlEnabled: enabled() });
+  }));
+  router.post('/api/xray-upgrade/check', asyncHandler(async (req,res) => {
+    if (!enabled()) return controlDisabled(res);
+    const parsed = requestObject(req, []);
+    if (parsed.error) return invalid(res, parsed.error);
+    res.json(await backend.checkCoreUpdate());
+  }));
+  router.post('/api/xray-upgrade/apply', asyncHandler(async (req,res) => {
+    if (!enabled()) return controlDisabled(res);
+    const parsed = requestObject(req, ['actionId']);
+    if (parsed.error) return invalid(res, parsed.error);
+    if (!exactId(parsed.value.actionId)) return invalid(res, 'valid actionId required');
+    res.status(202).json(await backend.applyCoreUpdate(parsed.value.actionId));
+  }));
+  router.post('/api/xray-upgrade/retry', mutation((operationId,actionId) => backend.retryCoreUpdate(operationId,actionId)));
+  router.post('/api/xray-upgrade/rollback', mutation((operationId,actionId) => backend.rollbackCoreUpdate(operationId,actionId)));
+
   app.use(router);
 }
 

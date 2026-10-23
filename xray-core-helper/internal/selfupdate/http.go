@@ -22,6 +22,21 @@ type Request struct {
 // choose an executable, installation root, service unit or filesystem path.
 func (e *Engine) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/xray-upgrade" || strings.HasPrefix(r.URL.Path, "/v1/xray-upgrade/") {
+			e.xrayUpgradeHTTP(w, r)
+			return
+		}
+		if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
+			core, err := e.xrayUpgradeState()
+			if err != nil {
+				respondError(w, 503, "xray_upgrade_state_unavailable", "Xray upgrade journal unavailable")
+				return
+			}
+			if xrayUpgradeActive(core) {
+				respondError(w, 409, "xray_upgrade_pending", "Xray upgrade is running")
+				return
+			}
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/update") {
 			if r.URL.Path == "/v1/update" && r.Method == "GET" {
 				op, err := e.Status(r.Context())

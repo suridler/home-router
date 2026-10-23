@@ -104,7 +104,9 @@ Factory: `/usr/share/xray-core-helper/templConf`.
 Working: `/etc/xray-core-helper/templConf`, root:root 0600.
 Четыре ID: xray-config, nftables, sysctl, tproxy-unit. Web env — не шаблон.
 
-При templates_different/templates_invalid смотрите сторону и код в /v1/templates.
+Обычное `different` между шаблоном и системным файлом не ухудшает readiness:
+это информация в разделе «Конфигурации». При `templates_different`
+(отсутствующие файлы) или `templates_invalid` смотрите сторону и код в `/v1/templates`.
 Не копируйте factory поверх рабочей системы. Raw Xray config/diff может
 содержать секреты; для браузера используйте безопасные проекции.
 

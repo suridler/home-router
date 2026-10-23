@@ -365,15 +365,21 @@ func (engine *Engine) Adopt(ctx context.Context, expectedGeneration uint64) (Met
 		return metadata, false, nil
 	}
 	log.Print("xray config drift detected; validating current configuration and helper annotations")
+	started := time.Now()
 	if err := engine.validator.Validate(ctx, engine.configPath); err != nil {
 		if errors.Is(err, ErrMarkupInvalid) {
-			log.Print("xray config adoption rejected: helper annotations are invalid")
+			log.Printf("xray config adoption rejected: helper annotations are invalid; elapsed=%s", time.Since(started).Round(time.Millisecond))
 			return Metadata{}, false, publicError("config_markup_invalid", "Xray configuration helper annotations are invalid; configuration was not adopted", 422, ErrMarkupInvalid)
 		}
-		log.Print("xray config adoption rejected: Xray validation failed")
+		if !errors.Is(err, ErrValidationFailed) {
+			code, _, _ := ErrorInfo(err)
+			log.Printf("xray config adoption interrupted; code=%s elapsed=%s", code, time.Since(started).Round(time.Millisecond))
+			return Metadata{}, false, err
+		}
+		log.Printf("xray config adoption rejected: Xray validation failed; elapsed=%s", time.Since(started).Round(time.Millisecond))
 		return Metadata{}, false, publicError("validation_failed", "Xray rejected the external configuration; configuration was not adopted", 422, ErrValidationFailed)
 	}
-	log.Print("xray config validation passed")
+	log.Printf("xray config validation passed; elapsed=%s", time.Since(started).Round(time.Millisecond))
 
 	confirmed, err := readSnapshot(engine.configPath)
 	if err != nil {
@@ -703,6 +709,16 @@ func (validator *XrayValidator) Validate(ctx context.Context, configPath string)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	if err := command.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return publicError("validation_timeout", "Xray validation exceeded its time limit", 503, ctx.Err())
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return publicError("validation_cancelled", "Xray validation was cancelled", 503, ctx.Err())
+		}
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() < 0 {
+			return publicError("validation_unavailable", "Xray validation process could not start", 503, nil)
+		}
 		return ErrValidationFailed
 	}
 	return nil

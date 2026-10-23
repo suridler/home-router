@@ -61,6 +61,21 @@
         <p class="notice" x-cloak x-show="!setupMode &amp;&amp; actionMessage" x-text="actionMessage" role="status"></p>
         <p class="notice" x-cloak x-show="!setupMode &amp;&amp; templateMessage" x-text="templateMessage" role="status"></p>
         <p class="notice" x-cloak x-show="!setupMode &amp;&amp; status &amp;&amp; !status.controlEnabled" x-text="mutationBlockedReason()"></p>
+        <section class="panel full-width" x-cloak x-show="activeView === 'updates'" aria-labelledby="xray-upgrade-title">
+          <div class="section-heading"><div><p class="eyebrow">Ядро маршрутизатора</p><h2 id="xray-upgrade-title">Обновление Xray-core</h2></div><span class="badge-status" :class="{ 'badge-status--warning': coreUpdateFailed(), 'badge-status--ok': ['succeeded','rolled_back'].includes(coreUpdate?.operation?.state) }" x-text="coreUpdateStage()"></span></div>
+          <dl class="kv-list"><div><dt>Установленная версия</dt><dd x-text="coreUpdate?.currentVersion || 'Нет данных'"></dd></div><div><dt>Последняя стабильная версия</dt><dd x-text="coreUpdateCheck?.latestVersion || 'Не проверено'"></dd></div></dl>
+          <p class="notice notice--warning" x-show="coreUpdateReadError" x-text="coreUpdateReadError"></p>
+          <p class="notice notice--warning" x-show="coreUpdateError" x-text="coreUpdateError" role="alert"></p>
+          <p class="notice notice--warning" x-show="coreUpdateFailed()" role="alert">Операция не завершена: <span x-text="coreUpdate?.operation?.error"></span>. Выберите повтор или восстановление предыдущего бинарника. Автоматического отката нет.</p>
+          <div class="actions">
+            <button class="secondary" :disabled="!coreUpdate?.controlEnabled || coreUpdateBusy || coreUpdateActive()" @click="checkCoreUpdate()">Проверить версию Xray</button>
+            <button class="primary" x-show="coreUpdateCheck?.updateAvailable &amp;&amp; !coreUpdateFailed()" :disabled="!coreUpdate?.controlEnabled || coreUpdateBusy || coreUpdateActive()" @click="runCoreUpdate('apply')">Обновить Xray</button>
+            <button class="secondary" x-show="coreUpdateFailed()" :disabled="!coreUpdate?.controlEnabled || coreUpdateBusy" @click="runCoreUpdate('retry')">Повторить обновление / запуск</button>
+            <button class="danger" x-show="coreUpdateFailed() &amp;&amp; coreUpdate?.operation?.backupReady" :disabled="!coreUpdate?.controlEnabled || coreUpdateBusy" @click="runCoreUpdate('rollback')">Вернуть предыдущий бинарник</button>
+          </div>
+          <p class="notice" x-show="coreUpdateActive()">Обновление выполняется в фоне. При замене бинарника helper кратковременно перезапускается; состояние операции сохраняется.</p>
+          <details class="technical-details" x-show="coreUpdate?.operation"><summary>Журнал обновления Xray</summary><pre x-text="(coreUpdate?.operation?.events || []).join('\n')"></pre></details>
+        </section>
         <section class="panel full-width helper-update-panel" x-cloak x-show="activeView === 'updates'" aria-labelledby="helper-update-title">
           <div class="section-heading">
             <div><p class="eyebrow">Комплект helper и веб-панели</p><h2 id="helper-update-title">Обновление системы</h2></div>

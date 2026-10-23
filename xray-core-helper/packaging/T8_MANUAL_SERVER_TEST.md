@@ -88,7 +88,8 @@ sudo jq '{templates: [.body.templates[]? | {templateId, state, summary}]}' \
   /var/backups/xray-T8.REPLACE/templates.json
 ```
 
-- `templates_different`: проверьте реальные различия, включая метаданные. После внешнего редактирования выполните явный refresh, как описано в [эксплуатации](../../docs/OPERATIONS.md).
+- `different` в списке шаблонов — информационное отличие, само по себе не провал readiness.
+- `templates_different` в readiness: проверьте отсутствующие шаблоны/системные файлы. После внешнего редактирования выполните явный refresh, как описано в [эксплуатации](../../docs/OPERATIONS.md).
 - `invalid_block_markers`: остановитесь и просмотрите native-блоки. Не заменяйте системный nftables заводским примером поверх действующей сети.
 - HTTP 409: прочитайте JSON соответствующего шага. `template_generation_conflict` требует проверки версии runner и `completedGeneration`, а не ручной правки базы.
 - `Working template changed`: сравните sha256/mode/uid/gid с fixture из state.json. Не исправляйте audit или права вслепую. Установите причину изменения.

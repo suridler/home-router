@@ -69,3 +69,12 @@ test('a failed Xray activation is a gateway error separate from successful geoda
   assert.equal(result.components.find(c => c.key === 'xray').state, 'error');
   assert.match(result.components.find(c => c.key === 'xray').label, /перезапуск Xray/);
 });
+
+test('informational template differences do not report a router problem', () => {
+  const input = facts();
+  input.readiness.checks.push({ name: 'templates', status: 'ready', code: 'templates_available' });
+  const result = gatewayStatus(input);
+  assert.equal(result.state, 'ok');
+  assert.deepEqual(result.issues, []);
+  assert.equal(result.components.find(item => item.key === 'ready-templates').state, 'ok');
+});

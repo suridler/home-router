@@ -50,6 +50,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	arguments := flags.Args()
+	if len(arguments) > 0 && arguments[0] == "xray-upgrade" {
+		return runXrayUpgrade(arguments[1:], *configPath, stdout, stderr)
+	}
 	if len(arguments) > 0 && arguments[0] == "install" {
 		return runInstall(arguments[1:], *configPath, os.Stdin, stdout, stderr)
 	}

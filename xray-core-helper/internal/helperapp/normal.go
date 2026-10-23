@@ -92,8 +92,8 @@ func (stack *closeStack) close() {
 }
 
 // buildNormal composes all normal-mode services and typed handlers. It does not
-// open a socket, start background jobs, reconcile the web service, or handle
-// signals; the caller owns those lifecycle decisions.
+// open a socket, start scheduled jobs, reconcile the web service, or handle
+// signals. Its config drift worker is stopped by Close before stores are closed.
 func (a *application) buildNormal(ctx context.Context, setupState *setup.Service) (bundle *normalBundle, resultErr error) {
 	cleanup := &closeStack{}
 	defer func() {
@@ -168,6 +168,8 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	if err := settingsService.RecoverLogging(ctx); err != nil {
 		return nil, err
 	}
+	drift := transaction.NewDriftReconciler(engine)
+	cleanup.add(drift.Close)
 	config := a.config
 	config.Logging = settingsService.Logging()
 
@@ -176,7 +178,7 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 		Config:   config.Xray.Config,
 		API:      config.Xray.API,
 		AssetDir: config.Xray.AssetDir,
-	}, store).WithDriftReconciler(engine.ReconcileDrift)
+	}, store).WithDriftReconciler(drift.Observe)
 	domainsStore, err := domainstore.Open(ctx, config.Storage.Database)
 	if err != nil {
 		return nil, err
@@ -326,6 +328,10 @@ func (a *application) buildNormal(ctx context.Context, setupState *setup.Service
 	server.Handler = xrayservice.Guard(server.Handler, a.installation, xrayservice.New().Resolve, func(r *http.Request) bool {
 		return httpapi.IndependentNativeOperation(r, safeApplyStore.Transaction)
 	})
+	if err := drift.Start(ctx); err != nil {
+		code, _, _ := transaction.ErrorInfo(err)
+		log.Printf("startup Xray configuration check did not complete successfully; code=%s", code)
+	}
 	return &normalBundle{
 		handler:      server.Handler,
 		server:       server,

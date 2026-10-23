@@ -42,6 +42,11 @@ function createHelperUpdateService({ helperClient }) {
   }
 
   return {
+    getCoreUpdateStatus: () => request('GET', '/v1/xray-upgrade'),
+    checkCoreUpdate: () => request('POST', '/v1/xray-upgrade/check', {}),
+    applyCoreUpdate: actionId => request('POST', '/v1/xray-upgrade/apply', { actionId }),
+    retryCoreUpdate: (operationId, actionId) => request('POST', '/v1/xray-upgrade/retry', { operationId, actionId }),
+    rollbackCoreUpdate: (operationId, actionId) => request('POST', '/v1/xray-upgrade/rollback', { operationId, actionId }),
     getUpdateStatus,
     checkUpdate,
     prepareUpdate,

@@ -95,6 +95,16 @@ func runInstall(args []string, config string, in io.Reader, out, stderr io.Write
 			interactive = st.Mode()&os.ModeCharDevice != 0
 		}
 	}
+	e.EnsureXray = func(ctx context.Context, op *selfupdate.Operation) error {
+		return e.EnsureXrayInstalled(ctx, op, func() bool {
+			if !interactive {
+				fmt.Fprintln(stderr, "Xray-core не установлен. Повторите установку в интерактивной консоли, чтобы разрешить его установку.")
+				return false
+			}
+			choice, ok := choose(bufio.NewScanner(in), out, "Xray-core не установлен. Установить последнюю стабильную версию?", []string{"Установить и продолжить", "Завершить установку"}, 2)
+			return ok && choice == 1
+		}, out)
+	}
 	e.Setup = func(ctx context.Context) error {
 		if !interactive {
 			fmt.Fprintln(out, "Компоненты установлены. Для настройки выполните: sudo xray-core-helper setup")

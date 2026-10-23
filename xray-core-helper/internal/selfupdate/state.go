@@ -35,21 +35,24 @@ type Attempt struct {
 }
 
 type Operation struct {
-	SchemaVersion  int       `json:"schemaVersion"`
-	ID             string    `json:"id"`
-	SourceVersion  string    `json:"sourceVersion,omitempty"`
-	TargetVersion  string    `json:"targetVersion"`
-	Commit         string    `json:"commit"`
-	Arch           string    `json:"arch"`
-	MinimumVersion string    `json:"minimum_installable_version,omitempty"`
-	Web            bool      `json:"web"`
-	Fresh          bool      `json:"fresh"`
-	State          string    `json:"state"`
-	Stage          string    `json:"stage"`
-	Error          string    `json:"error,omitempty"`
-	SnapshotReady  bool      `json:"snapshotReady"`
-	CreatedAt      time.Time `json:"createdAt"`
-	Attempts       []Attempt `json:"attempts"`
+	SchemaVersion  int    `json:"schemaVersion"`
+	ID             string `json:"id"`
+	SourceVersion  string `json:"sourceVersion,omitempty"`
+	TargetVersion  string `json:"targetVersion"`
+	Commit         string `json:"commit"`
+	Arch           string `json:"arch"`
+	MinimumVersion string `json:"minimum_installable_version,omitempty"`
+	Web            bool   `json:"web"`
+	Fresh          bool   `json:"fresh"`
+	State          string `json:"state"`
+	Stage          string `json:"stage"`
+	Error          string `json:"error,omitempty"`
+	// A selected prerequisite version is retained across preparation retries.
+	XrayVersion        string    `json:"xrayVersion,omitempty"`
+	XrayInstallStarted bool      `json:"xrayInstallStarted,omitempty"`
+	SnapshotReady      bool      `json:"snapshotReady"`
+	CreatedAt          time.Time `json:"createdAt"`
+	Attempts           []Attempt `json:"attempts"`
 	// Fingerprints belong to the private journal, never to the public API.
 	Before                  []Entry `json:"before,omitempty"`
 	CandidateDigest         string  `json:"candidateDigest,omitempty"`

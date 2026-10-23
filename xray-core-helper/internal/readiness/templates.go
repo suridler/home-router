@@ -11,16 +11,22 @@ func (service *Service) checkTemplates() api.ReadinessCheck {
 		return degradedCheck("templates", "template_status_unavailable")
 	}
 	different := false
+	incomplete := false
 	for _, item := range status.Templates {
 		if item.State == api.TemplateInvalid {
 			return degradedCheck("templates", "templates_invalid")
 		}
-		if item.State != api.TemplateSynchronized {
+		if item.State == api.TemplateDifferent {
 			different = true
+		} else if item.State != api.TemplateSynchronized {
+			incomplete = true
 		}
 	}
-	if different {
+	if incomplete {
 		return degradedCheck("templates", "templates_different")
+	}
+	if different {
+		return readyCheck("templates", "templates_available")
 	}
 	return readyCheck("templates", "templates_synchronized")
 }
