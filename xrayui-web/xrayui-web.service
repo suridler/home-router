@@ -1,6 +1,7 @@
 [Unit]
 Description=XrayUI web control for the Linux Xray gateway
 Wants=network-online.target
+Requires=xray-core-helper.service
 After=network-online.target xray-core-helper.service
 
 [Service]

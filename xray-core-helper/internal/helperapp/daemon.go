@@ -111,6 +111,12 @@ func (a *application) serveNormal(startupCtx context.Context, normal *normalBund
 			return errors.New("setup handoff status failed")
 		}
 	}
+	if lifecycle.ready != nil {
+		if err = lifecycle.ready(); err != nil {
+			_ = normal.server.Close()
+			return errors.New("systemd readiness notification failed")
+		}
+	}
 
 	ctx, stop := lifecycle.notify(context.Background())
 	defer stop()
@@ -196,6 +202,12 @@ func (a *application) runSetupDaemon(ctx context.Context, lifecycle runtimeLifec
 			return err
 		}
 	}
+	if lifecycle.ready != nil {
+		if err = lifecycle.ready(); err != nil {
+			_ = bundle.server.Close()
+			return errors.New("systemd readiness notification failed")
+		}
+	}
 	setupCtx, stop := lifecycle.notify(context.Background())
 	defer stop()
 	select {
@@ -278,6 +290,12 @@ func serveUpdateRecovery(configPath, version string, e *selfupdate.Engine) error
 		if err = web.Reconcile(context.Background()); err != nil {
 			_ = server.Close()
 			return err
+		}
+	}
+	if life.ready != nil {
+		if err = life.ready(); err != nil {
+			_ = server.Close()
+			return errors.New("systemd readiness notification failed")
 		}
 	}
 	ctx, stop := life.notify(context.Background())

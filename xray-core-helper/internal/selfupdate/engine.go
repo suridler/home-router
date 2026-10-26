@@ -812,8 +812,8 @@ func (e *Engine) Run(ctx context.Context, id, attemptID string) (result error) {
 		return err
 	}
 	if op.Web {
-		// Type=simple reports the daemon started before it has created web.env.
-		// The HTTP listener is opened after web runtime preparation completes.
+		// Type=notify makes start return only after web.env and the helper API
+		// listener are ready. Keep the health check before starting the GUI.
 		if e.Check == nil {
 			if err = e.verifyServices(ctx, op, false); err != nil {
 				return err

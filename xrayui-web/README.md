@@ -7,6 +7,8 @@
 Панель устанавливается [общим установщиком](../docs/INSTALLATION.md). По умолчанию адрес — `http://127.0.0.1:3000`. Параметры listener и `control_enabled` задаются в секции `[web]` helper, а не через `HOST`, `PORT` или `XRAYUI_CONTROL_ENABLED`.
 
 Сервис работает как `xrayui-web` с доступом к Unix socket helper. Путь socket передаётся через `XRAY_CORE_HELPER_SOCKET` в runtime environment. Локальный `.env` не читается; runtime environment служба получает из подготовленного helper файла `/run/xray-core-helper/web.env`. При первичной настройке он также содержит `XRAYUI_BOOTSTRAP_TOKEN`; после настройки токен не передаётся. Путь сокета обязателен, собственного значения по умолчанию у панели нет. Перед запуском listener панель получает настройки у helper; недоступные или некорректные настройки блокируют запуск.
+Systemd запускает панель только после сигнала готовности `xray-core-helper.service`;
+к этому моменту runtime environment и Unix-сокет уже созданы.
 
 HTTP-аутентификации пока нет. Для удалённого доступа используйте SSH-туннель; не публикуйте порт в интернет.
 

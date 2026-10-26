@@ -10,6 +10,8 @@ import (
 func TestSystemdUnitKeepsBetaBoundaryNarrow(t *testing.T) {
 	unit := readAsset(t, "systemd", "xray-core-helper.service")
 	required := []string{
+		"Type=notify",
+		"NotifyAccess=main",
 		"User=root",
 		"Group=xray-core-helper",
 		"ExecStart=/usr/local/sbin/xray-core-helperd -config /etc/xray-core-helper/config.toml",

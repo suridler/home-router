@@ -46,10 +46,10 @@ func (fake recoveryFake) Status() geodatarecovery.Status { return fake.status }
 
 func healthyDependencies() (configFake, databaseFake, xrayAPIFake, recoveryFake) {
 	return configFake{status: api.StatusResponse{
-		ConfigState: "parsed", ConfigReadable: true, ConfigParsed: true,
-	}}, databaseFake{}, xrayAPIFake{}, recoveryFake{status: geodatarecovery.Status{
-		Code: geodatarecovery.RecoveryNone.String(),
-	}}
+			ConfigState: "parsed", ConfigReadable: true, ConfigParsed: true,
+		}}, databaseFake{}, xrayAPIFake{}, recoveryFake{status: geodatarecovery.Status{
+			Code: geodatarecovery.RecoveryNone.String(),
+		}}
 }
 
 func TestCheckReportsFixedHealthyProjection(t *testing.T) {

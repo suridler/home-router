@@ -178,6 +178,7 @@ func webSettingsResponse(config bootstrap.WebConfig, enabled bool) api.WebSettin
 type runtimeLifecycle struct {
 	listen    func(string, string) (net.Listener, error)
 	notify    func(context.Context) (context.Context, func())
+	ready     func() error
 	parseHHMM func(string) (int, int)
 	startJobs func(context.Context, []scheduler.Job, func(string, bool)) func()
 }
@@ -185,6 +186,7 @@ type runtimeLifecycle struct {
 func systemRuntimeLifecycle() runtimeLifecycle {
 	return runtimeLifecycle{
 		listen: unixhttp.Listen,
+		ready:  notifySystemdReady,
 		notify: func(parent context.Context) (context.Context, func()) {
 			return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 		},

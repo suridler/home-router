@@ -20,7 +20,8 @@ test('systemd unit runs only as the unprivileged helper socket consumer', () => 
   assert.match(unit, /^AmbientCapabilities=$/m);
   assert.doesNotMatch(unit, /^User=root$|^Group=root$|^ReadWritePaths=/m);
   assert.match(unit, /^EnvironmentFile=\/run\/xray-core-helper\/web\.env$/m);
-  assert.doesNotMatch(unit, /^WantedBy=|^Requires=|^PartOf=|^BindsTo=/m);
+  assert.match(unit, /^Requires=xray-core-helper\.service$/m);
+  assert.doesNotMatch(unit, /^WantedBy=|^PartOf=|^BindsTo=/m);
   assert.doesNotMatch(unit, /^Wants=.*xray-core-helper/m);
 });
 
